@@ -4,19 +4,21 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Service
 import android.content.Intent
-import android.net.VpnService
 import android.os.Build
-import android.os.ParcelFileDescriptor
+import android.os.IBinder
+import com.wireguard.android.backend.GoBackend
+import com.wireguard.android.backend.Tunnel
+import com.wireguard.config.Config
+import java.io.File
+import java.io.FileInputStream
 
 /**
- * NetSwap VPN foundation.
- *
- * This first safe prototype creates only a private test route (10.77.0.1/32).
- * It deliberately does NOT install a default route or claim to proxy internet.
- * Peer transport, packet forwarding, NAT and quota enforcement are later stages.
+ * Runs an imported WireGuard client profile through the official GoBackend.
+ * The config stays in this app's private files directory and is never logged.
  */
-class NetSwapVpnService : VpnService() {
+class NetSwapVpnService : Service() {
     companion object {
         const val ACTION_START = "com.netswap.app.action.START_VPN"
         const val ACTION_STOP = "com.netswap.app.action.STOP_VPN"
@@ -28,7 +30,15 @@ class NetSwapVpnService : VpnService() {
         private const val NOTIFICATION_ID = 7301
     }
 
-    private var vpnInterface: ParcelFileDescriptor? = null
+    private var backend: GoBackend? = null
+    private val tunnel = object : Tunnel {
+        override fun getName(): String = "NetSwap"
+        override fun onStateChange(newState: Tunnel.State) {
+            publishState(newState == Tunnel.State.UP)
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -38,38 +48,35 @@ class NetSwapVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopTunnel()
-            publishState(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
 
         startForeground(NOTIFICATION_ID, buildNotification())
-        if (vpnInterface == null) {
+        Thread {
             try {
-                // A single test host route avoids capturing or interrupting normal internet.
-                vpnInterface = Builder()
-                    .setSession("NetSwap test tunnel")
-                    .setMtu(1400)
-                    .addAddress("10.77.0.2", 32)
-                    .addRoute("10.77.0.1", 32)
-                    .establish() ?: throw IllegalStateException("Android did not establish the VPN interface")
+                val configFile = File(filesDir, "netswap-wg.conf")
+                check(configFile.isFile && configFile.length() in 1..65536) {
+                    "Import a valid WireGuard configuration first."
+                }
+                val config = FileInputStream(configFile).use { Config.parse(it) }
+                val wg = backend ?: GoBackend(applicationContext).also { backend = it }
+                wg.setState(tunnel, Tunnel.State.UP, config)
                 publishState(true)
-            } catch (_: Exception) {
-                stopTunnel()
+            } catch (e: Exception) {
                 publishState(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
-                return START_NOT_STICKY
             }
-        }
-        return START_STICKY
+        }.start()
+        return START_NOT_STICKY
     }
 
     private fun stopTunnel() {
-        try { vpnInterface?.close() } catch (_: Exception) { }
-        vpnInterface = null
-        isTunnelActive = false
+        try { backend?.setState(tunnel, Tunnel.State.DOWN, null) } catch (_: Exception) { }
+        backend = null
+        publishState(false)
     }
 
     private fun publishState(active: Boolean) {
@@ -96,8 +103,8 @@ class NetSwapVpnService : VpnService() {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_warning)
-                .setContentTitle("NetSwap test tunnel")
-                .setContentText("Local VPN route test only — internet proxy is not active")
+                .setContentTitle("NetSwap WireGuard")
+                .setContentText("Secure tunnel service is running")
                 .setContentIntent(openApp)
                 .addAction(Notification.Action.Builder(null, "Disconnect VPN", disconnectIntent).build())
                 .setOngoing(true)
@@ -106,8 +113,8 @@ class NetSwapVpnService : VpnService() {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
                 .setSmallIcon(android.R.drawable.stat_sys_warning)
-                .setContentTitle("NetSwap test tunnel")
-                .setContentText("Local VPN route test only — internet proxy is not active")
+                .setContentTitle("NetSwap WireGuard")
+                .setContentText("Secure tunnel service is running")
                 .setContentIntent(openApp)
                 .addAction(0, "Disconnect VPN", disconnectIntent)
                 .setOngoing(true)
@@ -115,17 +122,8 @@ class NetSwapVpnService : VpnService() {
         }
     }
 
-    override fun onRevoke() {
-        stopTunnel()
-        publishState(false)
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-        super.onRevoke()
-    }
-
     override fun onDestroy() {
         stopTunnel()
-        publishState(false)
         super.onDestroy()
     }
 }
