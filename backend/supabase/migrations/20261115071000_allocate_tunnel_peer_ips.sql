@@ -33,7 +33,7 @@ begin
   end if;
 
   select ('10.77.0.' || n)::inet into v_sender
-    from generate_series(2,253) as n
+    from generate_series(2,253) as gs(n)
    where not exists (
      select 1 from public.tunnel_sessions t
       where t.id <> p_session_id
@@ -44,7 +44,7 @@ begin
   if v_sender is null then raise exception 'No free NetSwap relay addresses'; end if;
 
   select ('10.77.0.' || n)::inet into v_receiver
-    from generate_series(2,253) as n
+    from generate_series(2,253) as gs(n)
    where ('10.77.0.' || n)::inet <> v_sender
      and not exists (
        select 1 from public.tunnel_sessions t
