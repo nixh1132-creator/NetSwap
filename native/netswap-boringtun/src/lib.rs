@@ -83,6 +83,126 @@ impl NetSwapTunnel {
     }
 }
 
+
+
+/// Stable status values for the narrow C ABI used by Android's JNI adapter.
+pub const NETSWAP_OK: i32 = 0;
+pub const NETSWAP_INVALID_ARGUMENT: i32 = -1;
+pub const NETSWAP_BUFFER_TOO_SMALL: i32 = -2;
+pub const NETSWAP_ENGINE_ERROR: i32 = -3;
+pub const NETSWAP_PANIC: i32 = -4;
+
+fn write_engine_output(
+    result: Result<EngineOutput, EngineError>,
+    output: *mut u8,
+    output_capacity: usize,
+    output_len: *mut usize,
+    output_kind: *mut u32,
+) -> i32 {
+    if output_len.is_null() || output_kind.is_null() {
+        return NETSWAP_INVALID_ARGUMENT;
+    }
+    let (kind, bytes) = match result {
+        Ok(EngineOutput::Done) => (0u32, Vec::new()),
+        Ok(EngineOutput::Network(bytes)) => (1, bytes),
+        Ok(EngineOutput::TunnelV4 { packet, .. }) => (2, packet),
+        Ok(EngineOutput::TunnelV6 { packet, .. }) => (3, packet),
+        Err(_) => return NETSWAP_ENGINE_ERROR,
+    };
+    unsafe {
+        *output_len = bytes.len();
+        *output_kind = kind;
+    }
+    if bytes.len() > output_capacity || (!bytes.is_empty() && output.is_null()) {
+        return NETSWAP_BUFFER_TOO_SMALL;
+    }
+    if !bytes.is_empty() {
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), output, bytes.len()) };
+    }
+    NETSWAP_OK
+}
+
+/// Creates an opaque tunnel handle. Returns null for invalid pointers or panic.
+/// Key inputs must each point to exactly 32 readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn netswap_tunnel_new(
+    private_key: *const u8,
+    peer_public_key: *const u8,
+    keepalive_secs: u16,
+    index: u32,
+) -> *mut NetSwapTunnel {
+    if private_key.is_null() || peer_public_key.is_null() {
+        return std::ptr::null_mut();
+    }
+    std::panic::catch_unwind(|| {
+        let private = std::slice::from_raw_parts(private_key, 32);
+        let peer = std::slice::from_raw_parts(peer_public_key, 32);
+        let mut private_bytes = [0u8; 32];
+        let mut peer_bytes = [0u8; 32];
+        private_bytes.copy_from_slice(private);
+        peer_bytes.copy_from_slice(peer);
+        Box::into_raw(Box::new(NetSwapTunnel::new(
+            private_bytes,
+            peer_bytes,
+            if keepalive_secs == 0 { None } else { Some(keepalive_secs) },
+            index,
+        )))
+    }).unwrap_or(std::ptr::null_mut())
+}
+
+/// Destroys a handle returned by netswap_tunnel_new. Null is a no-op.
+#[no_mangle]
+pub unsafe extern "C" fn netswap_tunnel_free(handle: *mut NetSwapTunnel) {
+    if !handle.is_null() {
+        let _ = std::panic::catch_unwind(|| drop(Box::from_raw(handle)));
+    }
+}
+
+/// Encapsulates one IP packet. output_kind: 0=done, 1=network datagram,
+/// 2=IPv4 tunnel packet, 3=IPv6 tunnel packet.
+#[no_mangle]
+pub unsafe extern "C" fn netswap_tunnel_encapsulate(
+    handle: *mut NetSwapTunnel,
+    packet: *const u8,
+    packet_len: usize,
+    output: *mut u8,
+    output_capacity: usize,
+    output_len: *mut usize,
+    output_kind: *mut u32,
+) -> i32 {
+    if handle.is_null() || packet.is_null() || packet_len == 0 || packet_len > 65_535 {
+        return NETSWAP_INVALID_ARGUMENT;
+    }
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let input = std::slice::from_raw_parts(packet, packet_len);
+        let result = (*handle).encapsulate(input);
+        write_engine_output(result, output, output_capacity, output_len, output_kind)
+    })).unwrap_or(NETSWAP_PANIC)
+}
+
+/// Decapsulates one WireGuard UDP datagram.
+#[no_mangle]
+pub unsafe extern "C" fn netswap_tunnel_decapsulate(
+    handle: *mut NetSwapTunnel,
+    datagram: *const u8,
+    datagram_len: usize,
+    output: *mut u8,
+    output_capacity: usize,
+    output_len: *mut usize,
+    output_kind: *mut u32,
+) -> i32 {
+    if handle.is_null() || (datagram.is_null() && datagram_len != 0) || datagram_len > 65_535 {
+        return NETSWAP_INVALID_ARGUMENT;
+    }
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let input = if datagram_len == 0 { &[] } else {
+            std::slice::from_raw_parts(datagram, datagram_len)
+        };
+        let result = (*handle).decapsulate(input);
+        write_engine_output(result, output, output_capacity, output_len, output_kind)
+    })).unwrap_or(NETSWAP_PANIC)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
