@@ -101,7 +101,8 @@ class PacketTunnelBridge(
     private fun mustStop(result: PacketGateResult): Boolean =
         result == PacketGateResult.QUOTA_EXHAUSTED ||
         result == PacketGateResult.SESSION_REVOKED ||
-        result == PacketGateResult.SINK_REJECTED
+        result == PacketGateResult.SINK_REJECTED ||
+        !quota.snapshot().active
 
     private fun report(result: PacketGateResult, direction: TrafficDirection) {
         try { onGateResult(result, direction) } catch (_: Exception) { }
