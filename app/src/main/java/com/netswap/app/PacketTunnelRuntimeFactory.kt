@@ -1,6 +1,7 @@
 package com.netswap.app
 
 import android.net.VpnService
+import android.util.Base64
 import java.io.Closeable
 
 /**
@@ -19,10 +20,12 @@ object PacketTunnelRuntimeFactory {
         onFailure: (String) -> Unit = {}
     ): Runtime {
         require(privateKey.size == 32) { "WireGuard private key must be 32 bytes." }
-        val remotePublicKey = com.wireguard.crypto.Key.fromBase64(config.remotePublicKey)
+        com.wireguard.crypto.Key.fromBase64(config.remotePublicKey)
+        val remotePublicKeyBytes = Base64.decode(config.remotePublicKey, Base64.NO_WRAP)
+        require(remotePublicKeyBytes.size == 32) { "WireGuard peer public key must be 32 bytes." }
         val engine = NativeWireGuardEngine(
             privateKey = privateKey.copyOf(),
-            peerPublicKey = remotePublicKey.key
+            peerPublicKey = remotePublicKeyBytes
         )
         try {
             val bridge = PacketTunnelBridge(
