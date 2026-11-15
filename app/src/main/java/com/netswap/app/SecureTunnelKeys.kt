@@ -47,7 +47,9 @@ object SecureTunnelKeys {
         val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(requestId, null)
             ?: throw IllegalStateException("This phone has not prepared a tunnel key for this request.")
         val privateKeyBase64 = decrypt(stored)
-        return Key.fromBase64(privateKeyBase64).key
+        val raw = Base64.decode(privateKeyBase64, Base64.NO_WRAP)
+        require(raw.size == 32) { "Stored tunnel private key is invalid." }
+        return raw
     }
 
     private fun secretKey(): SecretKey {
