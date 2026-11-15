@@ -71,7 +71,7 @@ data class TunnelSessionConfig(
         private fun isIpv4(value: String): Boolean {
             val parts = value.split(".")
             return parts.size == 4 && parts.all {
-                it.isNotEmpty() && it.all(Char::isDigit) && it.toIntOrNull() in 0..255
+                it.isNotEmpty() && it.all(Char::isDigit) && (it.toIntOrNull()?.let { number -> number in 0..255 } == true)
             }
         }
     }
