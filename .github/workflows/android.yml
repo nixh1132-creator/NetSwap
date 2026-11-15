@@ -29,6 +29,16 @@ jobs:
       - name: Test pinned userspace WireGuard wrapper
         working-directory: native/netswap-boringtun
         run: cargo test
+      - name: Set up Android NDK
+        uses: android-actions/setup-android@v3
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@cargo-ndk
+      - name: Build WireGuard engine for Android ARM64
+        run: cargo ndk -t arm64-v8a build --release --manifest-path native/netswap-boringtun/Cargo.toml
+      - name: Package native ARM64 library into Android app
+        run: |
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          cp native/netswap-boringtun/target/aarch64-linux-android/release/libnetswap_boringtun.so app/src/main/jniLibs/arm64-v8a/libnetswap_boringtun.so
       - name: Run Android unit tests
         run: gradle testDebugUnitTest
       - name: Build debug APK
