@@ -138,7 +138,20 @@ class MainActivity : ComponentActivity() {
     private fun requestUserspaceTunnel(request: ShareRequest) {
         lifecycleScope.launch {
             try {
-                val key = withContext(Dispatchers.IO) { SecureTunnelKeys.getOrCreate(this@MainActivity, request.id).first }
+                val key = withContext(Dispatchers.IO) {
+                    val publicKey = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id).first
+                    NetSwapApi.registerTunnelPublicKey(
+                        AuthSession(
+                            prefs.getString("access_token", "") ?: "",
+                            prefs.getString("refresh_token", "") ?: "",
+                            prefs.getString("user_id", "") ?: "",
+                            prefs.getString("email", "") ?: ""
+                        ),
+                        request.id,
+                        publicKey
+                    )
+                    publicKey
+                }
                 pendingTunnelRequestId = request.id
                 pendingTunnelPublicKey = key
                 val prepare = VpnService.prepare(this@MainActivity)
