@@ -45,6 +45,16 @@ For persistent operation, use a systemd unit with `EnvironmentFile=/etc/netswap/
 - It does not mark sessions `ready` or `active`.
 - It does not implement hard byte quota. Those controls must be implemented and tested in the actual forwarding path before sharing can be advertised.
 
+## Automated tests
+
+Run the relay-agent unit tests from the repository root:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The suite checks key validation, idempotent peer removal, revoked-session cleanup, missing/malformed-key rejection, and successful allocation plus installation of both peers. GitHub Actions runs this suite before building the Android debug APK.
+
 ## Validation plan
 
 On a disposable test relay, first verify address allocation is unique under concurrent requests, then inspect `sudo wg show wg0` for exactly the expected two peers. Cancel the sharing request and verify the database trigger changes the session to `revoked`; the next agent poll should remove both peers. Do not test with real user traffic until sender-side forwarding, quota, and abuse controls are ready.
