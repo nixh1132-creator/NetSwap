@@ -49,3 +49,10 @@ The Supabase Edge Function `register-tunnel-public-key` is deployed with JWT ver
 - returns whether both public keys are registered.
 
 This endpoint is control-plane groundwork only. It does not create a WireGuard interface, configure a peer endpoint, relay packets, or provide internet access. The Android app does not call it yet; local key generation and authenticated client integration remain the next step.
+
+
+## First secure provisioning endpoint deployed
+
+The Supabase Edge Function `register-tunnel-public-key` is deployed with JWT verification enabled. It validates the caller's Supabase session, checks that the sharing request is approved, verifies the caller is exactly the sender or receiver, accepts only a WireGuard public key (never a private key), and creates or updates the server-managed tunnel session using the service role only inside the Edge Function.
+
+This is control-plane groundwork only. It does not create a WireGuard interface, configure a peer endpoint, relay packets, or provide internet access. The Android app does not call it yet; local key generation and authenticated client integration remain the next step.
