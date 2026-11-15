@@ -60,6 +60,23 @@ impl NetSwapTunnel {
         }
     }
 
+    /// Advance WireGuard protocol timers. A network output must be sent by the
+    /// transport layer; this method itself performs no socket I/O.
+    pub fn update_timers(&mut self) -> Result<EngineOutput, EngineError> {
+        let mut output = vec![0u8; 256];
+        match self.tunnel.update_timers(&mut output) {
+            TunnResult::Done => Ok(EngineOutput::Done),
+            TunnResult::Err(error) => Err(EngineError::Protocol(format!("{error:?}"))),
+            TunnResult::WriteToNetwork(bytes) => Ok(EngineOutput::Network(bytes.to_vec())),
+            TunnResult::WriteToTunnelV4(bytes, source) => Ok(EngineOutput::TunnelV4 {
+                packet: bytes.to_vec(), source: source.octets(),
+            }),
+            TunnResult::WriteToTunnelV6(bytes, source) => Ok(EngineOutput::TunnelV6 {
+                packet: bytes.to_vec(), source: source.octets(),
+            }),
+        }
+    }
+
     /// Decapsulate one received WireGuard UDP datagram.
     pub fn decapsulate(&mut self, datagram: &[u8]) -> Result<EngineOutput, EngineError> {
         if datagram.len() > 65_535 {
@@ -198,6 +215,25 @@ pub unsafe extern "C" fn netswap_tunnel_decapsulate(
             std::slice::from_raw_parts(datagram, datagram_len)
         };
         let result = (*handle).decapsulate(input);
+        write_engine_output(result, output, output_capacity, output_len, output_kind)
+    })).unwrap_or(NETSWAP_PANIC)
+}
+
+
+/// Advances protocol timers and returns any handshake/keepalive datagram.
+#[no_mangle]
+pub unsafe extern "C" fn netswap_tunnel_tick(
+    handle: *mut NetSwapTunnel,
+    output: *mut u8,
+    output_capacity: usize,
+    output_len: *mut usize,
+    output_kind: *mut u32,
+) -> i32 {
+    if handle.is_null() {
+        return NETSWAP_INVALID_ARGUMENT;
+    }
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let result = (*handle).update_timers();
         write_engine_output(result, output, output_capacity, output_len, output_kind)
     })).unwrap_or(NETSWAP_PANIC)
 }
