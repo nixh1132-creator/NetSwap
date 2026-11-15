@@ -20,6 +20,10 @@ class NetSwapVpnService : VpnService() {
     companion object {
         const val ACTION_START = "com.netswap.app.action.START_VPN"
         const val ACTION_STOP = "com.netswap.app.action.STOP_VPN"
+        const val ACTION_STATE = "com.netswap.app.action.VPN_STATE"
+        const val EXTRA_ACTIVE = "active"
+        @Volatile var isTunnelActive: Boolean = false
+            private set
         private const val CHANNEL_ID = "netswap_vpn_status"
         private const val NOTIFICATION_ID = 7301
     }
@@ -34,6 +38,7 @@ class NetSwapVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopTunnel()
+            publishState(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -48,8 +53,12 @@ class NetSwapVpnService : VpnService() {
                     .setMtu(1400)
                     .addAddress("10.77.0.2", 32)
                     .addRoute("10.77.0.1", 32)
-                    .establish()
+                    .establish() ?: throw IllegalStateException("Android did not establish the VPN interface")
+                publishState(true)
             } catch (_: Exception) {
+                stopTunnel()
+                publishState(false)
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -60,6 +69,12 @@ class NetSwapVpnService : VpnService() {
     private fun stopTunnel() {
         try { vpnInterface?.close() } catch (_: Exception) { }
         vpnInterface = null
+        isTunnelActive = false
+    }
+
+    private fun publishState(active: Boolean) {
+        isTunnelActive = active
+        sendBroadcast(Intent(ACTION_STATE).setPackage(packageName).putExtra(EXTRA_ACTIVE, active))
     }
 
     private fun createNotificationChannel() {
@@ -102,6 +117,7 @@ class NetSwapVpnService : VpnService() {
 
     override fun onRevoke() {
         stopTunnel()
+        publishState(false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         super.onRevoke()
@@ -109,6 +125,7 @@ class NetSwapVpnService : VpnService() {
 
     override fun onDestroy() {
         stopTunnel()
+        publishState(false)
         super.onDestroy()
     }
 }
