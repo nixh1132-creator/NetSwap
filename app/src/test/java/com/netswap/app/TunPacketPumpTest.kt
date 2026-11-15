@@ -40,9 +40,10 @@ class TunPacketPumpTest {
             pump.start()
             val first = byteArrayOf(0x45, 1, 2)
             device.incoming.put(first)
+            val firstReceived = received.poll(2, TimeUnit.SECONDS)
             first[1] = 99
+            assertArrayEquals(byteArrayOf(0x45, 1, 2), firstReceived)
             device.incoming.put(byteArrayOf(0x46, 3))
-            assertArrayEquals(byteArrayOf(0x45, 1, 2), received.poll(2, TimeUnit.SECONDS))
             assertArrayEquals(byteArrayOf(0x46, 3), received.poll(2, TimeUnit.SECONDS))
         } finally {
             pump.close()
