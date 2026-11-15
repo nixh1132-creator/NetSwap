@@ -88,6 +88,15 @@ object NetSwapApi {
         }
     }
 
+    fun registerTunnelPublicKey(session: AuthSession, requestId: String, publicKey: String): JSONObject {
+        return JSONObject(call(
+            "/functions/v1/register-tunnel-public-key",
+            "POST",
+            session.accessToken,
+            JSONObject().put("request_id", requestId).put("public_key", publicKey)
+        ))
+    }
+
     fun respond(session: AuthSession, requestId: String, status: String) {
         require(status == "approved" || status == "rejected" || status == "cancelled")
         val body = JSONObject().put("status", status).put("responded_at", java.time.Instant.now().toString())
