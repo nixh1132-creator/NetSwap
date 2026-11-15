@@ -28,7 +28,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Test pinned userspace WireGuard wrapper
         working-directory: native/netswap-boringtun
-        run: cargo test --locked
+        run: cargo test
       - name: Run Android unit tests
         run: gradle testDebugUnitTest
       - name: Build debug APK
