@@ -43,16 +43,18 @@ class RelayAgentTests(unittest.TestCase):
         self.assertEqual(peers, set())
 
     @mock.patch.object(agent, "wg")
-    @mock.patch.object(agent, "existing_peers", return_value=set())
+    @mock.patch.object(agent, "existing_peers")
     @mock.patch.object(agent, "http_json")
-    def test_terminal_session_removes_registered_peers(self, http_json, _peers, wg):
+    def test_terminal_session_removes_registered_peers(self, http_json, peers, wg):
         sender, receiver = public_key(1), public_key(2)
+        peers.return_value = {sender, receiver}
         http_json.return_value = [{
             "id": "session-1", "status": "revoked",
             "sender_public_key": sender, "receiver_public_key": receiver,
         }]
         agent.reconcile()
-        self.assertEqual(wg.call_count, 0)
+        self.assertEqual(wg.call_count, 2)
+        self.assertEqual(peers.call_count, 1)
 
     @mock.patch.object(agent, "wg")
     @mock.patch.object(agent, "existing_peers", return_value=set())
