@@ -1,39 +1,41 @@
 package com.netswap.app
 
 /**
- * Contract for a userspace WireGuard engine that exposes decrypted inner IP packets.
+ * Contract for a userspace WireGuard engine.
  *
- * This is deliberately an interface only. The current GoBackend does not implement it,
- * and no native BoringTun library is bundled yet.
+ * NetworkDatagram values must be sent to the configured peer over protected UDP.
+ * TunnelPacket values are decrypted inner IP packets and must pass packet policy
+ * and quota checks before they are injected into a TUN interface.
  */
 interface UserspaceWireGuardEngine : AutoCloseable {
-    /**
-     * Encrypt one complete inner IP packet for the configured peer.
-     * The returned datagram, if any, is ready for the authenticated UDP transport.
-     */
     fun encrypt(innerPacket: ByteArray): WireGuardEngineResult
-
-    /**
-     * Decrypt one received WireGuard UDP datagram.
-     * The returned packet, if any, is an inner IP packet and must pass packet policy
-     * and quota checks before it is forwarded or injected into another interface.
-     */
     fun decrypt(wireGuardDatagram: ByteArray): WireGuardEngineResult
-
-    /**
-     * Run protocol timers and return any outbound handshake/keepalive datagram.
-     */
     fun tick(): WireGuardEngineResult
-
-    /**
-     * Must release native tunnel state, buffers, timers, and callbacks.
-     * Implementations must be safe to call more than once.
-     */
+    /** Release native state. Implementations must tolerate repeated close calls. */
     override fun close()
 }
 
 sealed class WireGuardEngineResult {
-    data class Packet(val bytes: ByteArray) : WireGuardEngineResult()
+    data class NetworkDatagram(val bytes: ByteArray) : WireGuardEngineResult()
+    data class TunnelPacket(val bytes: ByteArray, val ipVersion: Int) : WireGuardEngineResult()
     object NoPacket : WireGuardEngineResult()
     data class Failure(val reason: String) : WireGuardEngineResult()
+}
+
+/** Decode the stable one-byte output-kind prefix returned by the JNI C ABI. */
+internal fun decodeWireGuardNativeResult(encoded: ByteArray): WireGuardEngineResult {
+    if (encoded.isEmpty()) return WireGuardEngineResult.Failure("Native result is malformed")
+    val kind = encoded[0].toInt() and 0xff
+    val bytes = encoded.copyOfRange(1, encoded.size)
+    return when (kind) {
+        0 -> if (bytes.isEmpty()) WireGuardEngineResult.NoPacket
+             else WireGuardEngineResult.Failure("Unexpected bytes for empty native output")
+        1 -> if (bytes.isNotEmpty()) WireGuardEngineResult.NetworkDatagram(bytes)
+             else WireGuardEngineResult.Failure("Empty network datagram")
+        2 -> if (bytes.isNotEmpty()) WireGuardEngineResult.TunnelPacket(bytes, 4)
+             else WireGuardEngineResult.Failure("Empty IPv4 tunnel packet")
+        3 -> if (bytes.isNotEmpty()) WireGuardEngineResult.TunnelPacket(bytes, 6)
+             else WireGuardEngineResult.Failure("Empty IPv6 tunnel packet")
+        else -> WireGuardEngineResult.Failure("Unknown native output type")
+    }
 }
