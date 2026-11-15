@@ -29,10 +29,12 @@ Every account receives a server-generated UID such as `NS-XXXXXXXXXX`. A user ca
 4. [ ] Build Kotlin Android app shell and authentication.
 5. [ ] Add UID profile display and exact UID lookup.
 6. [ ] Add sharing request UI and consent workflow.
-7. [ ] Prototype nearby traffic forwarding on two physical phones.
-8. [ ] Prototype remote tunnel and relay path.
-9. [ ] Enforce traffic quotas in the networking data plane.
-10. [ ] Test carrier compatibility, battery behavior, privacy, and failure recovery.
+7. [ ] Verify VPN lifecycle and stop/revoke behavior on physical Android devices.
+8. [ ] Select and integrate an audited tunnel protocol (prefer WireGuard; do not invent cryptography).
+9. [ ] Build a sender gateway with packet forwarding/NAT and a receiver client; prove direct connectivity on two phones.
+10. [ ] Add relay coordination for carrier NAT/firewall cases.
+11. [ ] Enforce quotas and revocation in the gateway/data plane, not in UI counters.
+12. [ ] Test carrier compatibility, battery behavior, privacy, and failure recovery.
 
 ## Current limitations
 
