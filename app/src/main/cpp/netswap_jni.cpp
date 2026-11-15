@@ -9,7 +9,8 @@ extern "C" {
 void* netswap_tunnel_new(const uint8_t*, const uint8_t*, uint16_t, uint32_t);
 void netswap_tunnel_free(void*);
 int32_t netswap_tunnel_encapsulate(void*, const uint8_t*, size_t, uint8_t*, size_t, size_t*, uint32_t*);
-int32_t netswap_tunnel_decapsulate(void*, const uint8_t*, size_t, uint8_t*, size_t, size_t*, uint32_t*);\nint32_t netswap_tunnel_tick(void*, uint8_t*, size_t, size_t*, uint32_t*);
+int32_t netswap_tunnel_decapsulate(void*, const uint8_t*, size_t, uint8_t*, size_t, size_t*, uint32_t*);
+int32_t netswap_tunnel_tick(void*, uint8_t*, size_t, size_t*, uint32_t*);
 }
 
 struct EngineHandle { void* tunnel; std::mutex mutex; };
