@@ -46,7 +46,8 @@ jobs:
           rustup target add aarch64-linux-android
           cargo install cargo-ndk --locked
       - name: Build WireGuard engine for Android ARM64
-        run: cargo ndk -t arm64-v8a build --release --manifest-path native/netswap-boringtun/Cargo.toml
+        working-directory: native/netswap-boringtun
+        run: cargo ndk -t arm64-v8a build --release
       - name: Package native ARM64 library into Android app
         run: |
           mkdir -p app/src/main/jniLibs/arm64-v8a
