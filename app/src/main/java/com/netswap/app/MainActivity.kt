@@ -9,6 +9,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
 import android.net.VpnService
+import android.widget.Toast
+import com.wireguard.config.Config
+import java.io.ByteArrayInputStream
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -53,8 +56,35 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) requestVpnSetup()
     }
+    private val wireGuardConfigPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importWireGuardConfig(uri)
+    }
+
+    private fun importWireGuardConfig(uri: android.net.Uri) {
+        lifecycleScope.launch {
+            try {
+                val bytes = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw IllegalArgumentException("Could not read the selected file.")
+                }
+                require(bytes.size in 1..65536) { "Config file must be smaller than 64 KB." }
+                withContext(Dispatchers.IO) {
+                    Config.parse(ByteArrayInputStream(bytes))
+                    openFileOutput("netswap-wg.conf", MODE_PRIVATE).use { it.write(bytes) }
+                }
+                Toast.makeText(this@MainActivity, "WireGuard config imported securely on this phone.", Toast.LENGTH_LONG).show()
+                requestVpnSetup()
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, e.message ?: "Invalid WireGuard config.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     private fun startVpnWithNotificationPermission() {
+        if (!getFileStreamPath("netswap-wg.conf").exists()) {
+            wireGuardConfigPicker.launch(arrayOf("text/plain", "application/octet-stream", "*/*"))
+            return
+        }
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -73,7 +103,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun disconnectVpnService() {
-        stopService(Intent(this, NetSwapVpnService::class.java))
+        launchVpnService(NetSwapVpnService.ACTION_STOP)
         vpnState.value = false
         prefs.edit().putBoolean("vpn_active", false).apply()
     }
@@ -258,8 +288,8 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                 OutlinedButton(onClick = onVpnDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect VPN") }
                 Text("Test VPN route connected • Internet sharing is not active yet.", color = Muted, fontSize = 11.sp)
             } else {
-                OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Connect VPN (test)") }
-                Text("VPN foundation only: this test route does not share or proxy internet yet.", color = Muted, fontSize = 11.sp)
+                OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Connect WireGuard VPN") }
+                Text("Import a trusted WireGuard .conf file to connect. NetSwap friend-to-friend sharing is still under development.", color = Muted, fontSize = 11.sp)
             }
             if (showSend) {
                 Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
