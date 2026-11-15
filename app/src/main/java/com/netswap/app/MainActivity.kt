@@ -52,16 +52,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun launchVpnService(action: String) {
+        val intent = Intent(this, NetSwapVpnService::class.java).setAction(action)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+    }
+
+    private fun startVpnService() {
+        launchVpnService(NetSwapVpnService.ACTION_START)
+        prefs.edit().putBoolean("vpn_active", true).apply()
+    }
+
+    private fun disconnectVpnService() {
+        launchVpnService(NetSwapVpnService.ACTION_STOP)
+        prefs.edit().putBoolean("vpn_active", false).apply()
+    }
+
     private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == RESULT_OK) {
-            startService(Intent(this, NetSwapVpnService::class.java).setAction(NetSwapVpnService.ACTION_START))
-        }
+        if (result.resultCode == RESULT_OK) startVpnService()
     }
 
     private fun requestVpnSetup() {
         val prepareIntent = VpnService.prepare(this)
         if (prepareIntent != null) vpnPermissionLauncher.launch(prepareIntent)
-        else startService(Intent(this, NetSwapVpnService::class.java).setAction(NetSwapVpnService.ACTION_START))
+        else startVpnService()
     }
 
     private val prefs by lazy { getSharedPreferences("netswap_session", MODE_PRIVATE) }
@@ -82,6 +95,7 @@ class MainActivity : ComponentActivity() {
                 var requests by remember { mutableStateOf(emptyList<ShareRequest>()) }
                 var loading by remember { mutableStateOf(false) }
                 var message by remember { mutableStateOf("") }
+                var vpnActive by remember { mutableStateOf(prefs.getBoolean("vpn_active", false)) }
 
                 fun saveSession(s: AuthSession) {
                     prefs.edit().putString("access_token", s.accessToken).putString("refresh_token", s.refreshToken)
@@ -130,7 +144,9 @@ class MainActivity : ComponentActivity() {
                 } else {
                     HomeScreen(session!!, uid, requests, loading, message,
                         onRefresh = { loadHome(session!!) },
-                        onVpnSetup = { startVpnWithNotificationPermission() },
+                        vpnActive = vpnActive,
+                        onVpnSetup = { startVpnWithNotificationPermission(); vpnActive = true },
+                        onVpnDisconnect = { disconnectVpnService(); vpnActive = false },
                         onSend = { friendUid, quota ->
                             lifecycleScope.launch {
                                 loading = true; message = ""
@@ -189,7 +205,8 @@ private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,Strin
 
 @Composable
 private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
-    onRefresh: () -> Unit, onVpnSetup: () -> Unit, onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit, onLogout: ()->Unit) {
+    vpnActive: Boolean, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
+    onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit, onLogout: ()->Unit) {
     var friendUid by remember { mutableStateOf("") }
     var quota by remember { mutableStateOf(500L * 1024 * 1024) }
     var showSend by remember { mutableStateOf(false) }
@@ -213,8 +230,13 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                 Button(onClick = { showSend = !showSend }, modifier = Modifier.weight(1f)) { Text("Send data request") }
                 OutlinedButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
             }
-            OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Set up VPN permission (test)") }
-            Text("VPN foundation only: this test route does not share or proxy internet yet.", color = Muted, fontSize = 11.sp)
+            if (vpnActive) {
+                OutlinedButton(onClick = onVpnDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect VPN") }
+                Text("Test VPN route connected • Internet sharing is not active yet.", color = Muted, fontSize = 11.sp)
+            } else {
+                OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Connect VPN (test)") }
+                Text("VPN foundation only: this test route does not share or proxy internet yet.", color = Muted, fontSize = 11.sp)
+            }
             if (showSend) {
                 Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
                     Text("Friend's NetSwap UID", fontWeight = FontWeight.SemiBold)
