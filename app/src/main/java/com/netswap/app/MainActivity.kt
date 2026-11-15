@@ -151,9 +151,10 @@ class MainActivity : ComponentActivity() {
                         .putString("user_id", s.userId).putString("email", s.email).apply()
                     session = s
                 }
-                fun loadHome(s: AuthSession) {
+                fun loadHome(s: AuthSession, clearMessage: Boolean = true) {
                     lifecycleScope.launch {
-                        loading = true; message = ""
+                        loading = true
+                        if (clearMessage) message = ""
                         try {
                             val data = withContext(Dispatchers.IO) {
                                 val refreshed = if (s.accessToken.isBlank()) NetSwapApi.refresh(s.refreshToken) else s
@@ -232,7 +233,7 @@ class MainActivity : ComponentActivity() {
                                     } else {
                                         "This phone's public key is registered. Your friend must prepare their phone too."
                                     }
-                                    loadHome(session!!)
+                                    loadHome(session!!, clearMessage = false)
                                 } catch (e: Exception) {
                                     message = e.message ?: "Could not prepare the secure key."
                                     loading = false
