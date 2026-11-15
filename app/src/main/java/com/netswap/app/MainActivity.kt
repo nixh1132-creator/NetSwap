@@ -3,6 +3,9 @@ package com.netswap.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -68,9 +71,12 @@ private fun NetSwapHome() {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
-                    Text("NetSwap", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink)
-                    Text("Share a little. Stay connected.", fontSize = 13.sp, color = Muted)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Image(painter = painterResource(id = R.drawable.netswap_logo), contentDescription = "NetSwap logo", modifier = Modifier.height(54.dp), contentScale = ContentScale.Fit)
+                    Column {
+                        Text("NetSwap", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink)
+                        Text("Share a little. Stay connected.", fontSize = 13.sp, color = Muted)
+                    }
                 }
                 Box(
                     modifier = Modifier
