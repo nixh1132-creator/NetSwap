@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
                     openFileOutput("netswap-wg.conf", MODE_PRIVATE).use { it.write(bytes) }
                 }
                 Toast.makeText(this@MainActivity, "WireGuard config imported securely on this phone.", Toast.LENGTH_LONG).show()
-                requestVpnSetup()
+                startVpnWithNotificationPermission()
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity, e.message ?: "Invalid WireGuard config.", Toast.LENGTH_LONG).show()
             }
@@ -103,7 +103,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun disconnectVpnService() {
-        launchVpnService(NetSwapVpnService.ACTION_STOP)
+        startService(Intent(this, NetSwapVpnService::class.java).setAction(NetSwapVpnService.ACTION_STOP))
         vpnState.value = false
         prefs.edit().putBoolean("vpn_active", false).apply()
     }
