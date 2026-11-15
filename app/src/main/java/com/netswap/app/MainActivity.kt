@@ -1,6 +1,9 @@
 package com.netswap.app
 
 import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.content.Intent
 import android.net.VpnService
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +39,19 @@ private val Mint = Color(0xFFDDF2E8)
 private val White = Color(0xFFFFFFFF)
 
 class MainActivity : ComponentActivity() {
+    private val notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) requestVpnSetup()
+    }
+
+    private fun startVpnWithNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            requestVpnSetup()
+        }
+    }
+
     private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
             startService(Intent(this, NetSwapVpnService::class.java).setAction(NetSwapVpnService.ACTION_START))
@@ -114,7 +130,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     HomeScreen(session!!, uid, requests, loading, message,
                         onRefresh = { loadHome(session!!) },
-                        onVpnSetup = { requestVpnSetup() },
+                        onVpnSetup = { startVpnWithNotificationPermission() },
                         onSend = { friendUid, quota ->
                             lifecycleScope.launch {
                                 loading = true; message = ""
