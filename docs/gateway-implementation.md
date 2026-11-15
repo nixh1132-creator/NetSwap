@@ -35,3 +35,17 @@ A normal Android app cannot enable kernel IP forwarding/NAT with root-only syste
 ## Next engineering milestone
 
 Implement and test a sender-side userspace forwarding prototype on a controlled network. Only after that prototype forwards real TCP and UDP packets should the remote relay and quota enforcement be connected.
+
+
+## First secure provisioning endpoint deployed
+
+The Supabase Edge Function `register-tunnel-public-key` is deployed with JWT verification enabled. It:
+
+- validates the caller's Supabase session;
+- checks that the sharing request exists and is already approved;
+- checks that the caller is exactly the sender or receiver;
+- accepts only a WireGuard public key (never a private key);
+- creates or updates the server-managed tunnel session using the service role only inside the Edge Function;
+- returns whether both public keys are registered.
+
+This endpoint is control-plane groundwork only. It does not create a WireGuard interface, configure a peer endpoint, relay packets, or provide internet access. The Android app does not call it yet; local key generation and authenticated client integration remain the next step.
