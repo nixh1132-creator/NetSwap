@@ -48,7 +48,7 @@ The Supabase Edge Function `register-tunnel-public-key` is deployed with JWT ver
 - creates or updates the server-managed tunnel session using the service role only inside the Edge Function;
 - returns whether both public keys are registered.
 
-This endpoint is control-plane groundwork only. It does not create a WireGuard interface, configure a peer endpoint, relay packets, or provide internet access. The Android app does not call it yet; local key generation and authenticated client integration remain the next step.
+This endpoint is control-plane groundwork only. It does not create a WireGuard interface, configure a peer endpoint, relay packets, or provide internet access. The Android app now generates a WireGuard keypair on-device, encrypts the private key with an Android Keystore AES-GCM key, and calls this endpoint with only the public key for approved requests. This registers key material only; it does not configure peers or route traffic.
 
 
 ## First secure provisioning endpoint deployed
@@ -56,3 +56,16 @@ This endpoint is control-plane groundwork only. It does not create a WireGuard i
 The Supabase Edge Function `register-tunnel-public-key` is deployed with JWT verification enabled. It validates the caller's Supabase session, checks that the sharing request is approved, verifies the caller is exactly the sender or receiver, accepts only a WireGuard public key (never a private key), and creates or updates the server-managed tunnel session using the service role only inside the Edge Function.
 
 This is control-plane groundwork only. It does not create a WireGuard interface, configure a peer endpoint, relay packets, or provide internet access. The Android app does not call it yet; local key generation and authenticated client integration remain the next step.
+
+
+## Android key-registration milestone
+
+- Added `SecureTunnelKeys`, which creates a WireGuard keypair locally and encrypts the private key using an AES-GCM key held by Android Keystore.
+- The encrypted private key is stored in app-private preferences, scoped to the sharing request ID. The private key is never sent to Supabase or written to the repository.
+- Added the authenticated Android API call to `register-tunnel-public-key`.
+- Approved sharing requests now show a **Prepare secure tunnel key** action. Each participant must run it on their own phone.
+- The Android debug APK workflow passed for this milestone.
+
+## Current hard blocker before real packet forwarding
+
+No public UDP WireGuard relay/gateway endpoint is provisioned. The database's `gateway_endpoint` is metadata only. Do not create peer configs with a placeholder endpoint or mark a session ready. The next milestone requires choosing and provisioning a reachable relay/gateway host, then implementing a userspace packet-forwarding data plane with per-session byte counters and revocation.
