@@ -9,7 +9,7 @@ extern "C" {
 void* netswap_tunnel_new(const uint8_t*, const uint8_t*, uint16_t, uint32_t);
 void netswap_tunnel_free(void*);
 int32_t netswap_tunnel_encapsulate(void*, const uint8_t*, size_t, uint8_t*, size_t, size_t*, uint32_t*);
-int32_t netswap_tunnel_decapsulate(void*, const uint8_t*, size_t, uint8_t*, size_t, size_t*, uint32_t*);
+int32_t netswap_tunnel_decapsulate(void*, const uint8_t*, size_t, uint8_t*, size_t, size_t*, uint32_t*);\nint32_t netswap_tunnel_tick(void*, uint8_t*, size_t, size_t*, uint32_t*);
 }
 
 struct EngineHandle { void* tunnel; std::mutex mutex; };
@@ -73,3 +73,25 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_netswap_app_NativeWireGuardEngine_nativeEncapsulate(JNIEnv* e, jobject, jlong h, jbyteArray p) { return process(e,h,p,false); }
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_netswap_app_NativeWireGuardEngine_nativeDecapsulate(JNIEnv* e, jobject, jlong h, jbyteArray p) { return process(e,h,p,true); }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_netswap_app_NativeWireGuardEngine_nativeTick(JNIEnv* env, jobject, jlong value) {
+    auto* h = reinterpret_cast<EngineHandle*>(value);
+    if (!h) { throwState(env, "Tunnel is closed"); return nullptr; }
+    std::vector<uint8_t> out(256);
+    size_t outLen = 0; uint32_t kind = 0; int32_t status;
+    {
+        std::lock_guard<std::mutex> lock(h->mutex);
+        if (!h->tunnel) { throwState(env, "Tunnel is closed"); return nullptr; }
+        status = netswap_tunnel_tick(h->tunnel, out.data(), out.size(), &outLen, &kind);
+    }
+    if (status != 0 || outLen > out.size() || kind > 3) {
+        throwState(env, "Native WireGuard timer update failed"); return nullptr;
+    }
+    jbyteArray result = env->NewByteArray(static_cast<jsize>(outLen + 1));
+    if (!result) return nullptr;
+    jbyte header = static_cast<jbyte>(kind);
+    env->SetByteArrayRegion(result, 0, 1, &header);
+    if (outLen) env->SetByteArrayRegion(result, 1, static_cast<jsize>(outLen), reinterpret_cast<const jbyte*>(out.data()));
+    return result;
+}
