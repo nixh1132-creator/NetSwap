@@ -40,6 +40,8 @@ class NetSwapUserspaceVpnService : VpnService() {
     private var packetDevice: AndroidTunPacketDevice? = null
     private var packetPump: TunPacketPump? = null
     private val packetsRead = AtomicLong(0)
+    private val lifecycleGeneration = AtomicLong(0)
+    private val lifecycleLock = Any()
     private val worker = Executors.newSingleThreadExecutor()
     @Volatile private var runtime: PacketTunnelRuntimeFactory.Runtime? = null
 
@@ -100,6 +102,7 @@ class NetSwapUserspaceVpnService : VpnService() {
                 }
                 prefs.edit().putString("access_token", session.accessToken)
                     .putString("refresh_token", session.refreshToken).apply()
+                check(lifecycleGeneration.get() == generation) { "Tunnel start was cancelled." }
 
                 val config = NetSwapApi.tunnelSessionConfig(session, requestId, localPublicKey)
                 val privateKey = SecureTunnelKeys.getPrivateKeyBytes(this, requestId)
@@ -110,22 +113,38 @@ class NetSwapUserspaceVpnService : VpnService() {
                     .addRoute(config.remoteTunnelIp, 32)
                     .establish() ?: error("Android could not establish the NetSwap TUN interface")
 
-                tun = established
+                if (lifecycleGeneration.get() != generation) {
+                    established.close()
+                    return@execute
+                }
                 val device = AndroidTunPacketDevice.from(established)
-                packetDevice = device
-                val created = PacketTunnelRuntimeFactory.create(
-                    vpnService = this,
-                    tunDevice = device,
-                    config = config,
-                    privateKey = privateKey,
-                    onFailure = {
-                        publishState(false)
-                        stopSelf()
+                val created = try {
+                    PacketTunnelRuntimeFactory.create(
+                        vpnService = this,
+                        tunDevice = device,
+                        config = config,
+                        privateKey = privateKey,
+                        onFailure = {
+                            publishState(false)
+                            stopSelf()
+                        }
+                    )
+                } catch (failure: Exception) {
+                    device.close()
+                    throw failure
+                }
+                synchronized(lifecycleLock) {
+                    if (lifecycleGeneration.get() != generation) {
+                        created.close()
+                        established.close()
+                    } else {
+                        tun = established
+                        packetDevice = device
+                        runtime = created
+                        created.start()
+                        publishState(true)
                     }
-                )
-                runtime = created
-                created.start()
-                publishState(true)
+                }
             } catch (e: Exception) {
                 stopUserspaceVpn()
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -137,13 +156,16 @@ class NetSwapUserspaceVpnService : VpnService() {
     }
 
     private fun stopUserspaceVpn() {
-        try { runtime?.close() } catch (_: Exception) { }
-        runtime = null
-        packetPump?.close()
-        packetPump = null
-        packetDevice = null
-        try { tun?.close() } catch (_: Exception) { }
-        tun = null
+        synchronized(lifecycleLock) {
+            lifecycleGeneration.incrementAndGet()
+            try { runtime?.close() } catch (_: Exception) { }
+            runtime = null
+            packetPump?.close()
+            packetPump = null
+            packetDevice = null
+            try { tun?.close() } catch (_: Exception) { }
+            tun = null
+        }
         publishState(false)
     }
 
