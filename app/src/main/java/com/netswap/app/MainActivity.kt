@@ -217,6 +217,28 @@ class MainActivity : ComponentActivity() {
                                 catch (e: Exception) { message = e.message ?: "Could not update request."; loading = false }
                             }
                         },
+                        onPrepareTunnel = { request ->
+                            lifecycleScope.launch {
+                                loading = true
+                                message = "Preparing this phone's secure key…"
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        val keys = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id)
+                                        NetSwapApi.registerTunnelPublicKey(session!!, request.id, keys.first)
+                                    }
+                                    val both = result.optBoolean("sender_key_registered") && result.optBoolean("receiver_key_registered")
+                                    message = if (both) {
+                                        "This phone's key is registered. Both phones have keys; network gateway setup is still pending."
+                                    } else {
+                                        "This phone's public key is registered. Your friend must prepare their phone too."
+                                    }
+                                    loadHome(session!!)
+                                } catch (e: Exception) {
+                                    message = e.message ?: "Could not prepare the secure key."
+                                    loading = false
+                                }
+                            }
+                        },
                         onLogout = { prefs.edit().clear().apply(); session = null; uid = ""; requests = emptyList(); message = "" }
                     )
                 }
@@ -260,7 +282,8 @@ private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,Strin
 @Composable
 private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
     vpnActive: Boolean, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
-    onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit, onLogout: ()->Unit) {
+    onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
+    onPrepareTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
     var friendUid by remember { mutableStateOf("") }
     var quota by remember { mutableStateOf(500L * 1024 * 1024) }
     var showSend by remember { mutableStateOf(false) }
@@ -320,6 +343,14 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                             }
                         } else if (!incoming && r.status in listOf("pending","approved")) {
                             TextButton(onClick = { onRespond(r, "cancelled") }) { Text("Cancel request") }
+                        }
+                        if (r.status == "approved") {
+                            OutlinedButton(
+                                onClick = { onPrepareTunnel(r) },
+                                enabled = !loading,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Prepare secure tunnel key") }
+                            Text("Creates a device-protected key and registers only its public part.", color = Muted, fontSize = 11.sp)
                         }
                     }
                 }
