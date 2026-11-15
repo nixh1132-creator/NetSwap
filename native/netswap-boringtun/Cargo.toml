@@ -4,5 +4,8 @@ version = "0.1.0"
 edition = "2021"
 license = "BSD-3-Clause"
 
-[lib]\ncrate-type = ["rlib", "cdylib"]\n\n[dependencies]
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
 boringtun = "=0.7.1"
