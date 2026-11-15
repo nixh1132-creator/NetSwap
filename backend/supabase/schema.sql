@@ -171,3 +171,38 @@ create policy "Sender can cancel own request"
     (select auth.uid()) = sender_id
     and status = 'cancelled'
   );
+
+ 
+-- Data-plane session registry. Stores WireGuard PUBLIC keys only.
+create table if not exists public.tunnel_sessions (
+  id uuid primary key default gen_random_uuid(),
+  sharing_request_id uuid not null unique references public.sharing_requests(id) on delete cascade,
+  sender_id uuid not null references public.profiles(id) on delete cascade,
+  receiver_id uuid not null references public.profiles(id) on delete cascade,
+  sender_public_key text,
+  receiver_public_key text,
+  sender_tunnel_ip inet,
+  receiver_tunnel_ip inet,
+  gateway_endpoint text,
+  status text not null default 'provisioning'
+    check (status in ('provisioning','ready','active','revoked','failed','expired')),
+  quota_bytes bigint not null check (quota_bytes > 0),
+  bytes_received bigint not null default 0 check (bytes_received >= 0),
+  bytes_sent bigint not null default 0 check (bytes_sent >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  expires_at timestamptz,
+  revoked_at timestamptz,
+  constraint tunnel_sessions_distinct_users check (sender_id <> receiver_id)
+);
+create index if not exists tunnel_sessions_sender_idx on public.tunnel_sessions(sender_id, created_at desc);
+create index if not exists tunnel_sessions_receiver_idx on public.tunnel_sessions(receiver_id, created_at desc);
+alter table public.tunnel_sessions enable row level security;
+drop policy if exists "Participants can read their tunnel session" on public.tunnel_sessions;
+create policy "Participants can read their tunnel session"
+  on public.tunnel_sessions for select to authenticated
+  using ((select auth.uid()) = sender_id or (select auth.uid()) = receiver_id);
+grant select on public.tunnel_sessions to authenticated;
+revoke insert, update, delete on public.tunnel_sessions from anon, authenticated;
+comment on table public.tunnel_sessions is
+  'Server-managed WireGuard session metadata. Public keys only; private keys and authoritative quota enforcement stay in the gateway.';
