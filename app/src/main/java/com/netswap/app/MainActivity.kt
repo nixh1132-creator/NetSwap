@@ -5,6 +5,9 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.net.VpnService
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
@@ -39,6 +42,14 @@ private val Mint = Color(0xFFDDF2E8)
 private val White = Color(0xFFFFFFFF)
 
 class MainActivity : ComponentActivity() {
+    private val vpnState = mutableStateOf(false)
+    private val vpnStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == NetSwapVpnService.ACTION_STATE) {
+                vpnState.value = intent.getBooleanExtra(NetSwapVpnService.EXTRA_ACTIVE, false)
+            }
+        }
+    }
     private val notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) requestVpnSetup()
     }
@@ -59,11 +70,11 @@ class MainActivity : ComponentActivity() {
 
     private fun startVpnService() {
         launchVpnService(NetSwapVpnService.ACTION_START)
-        prefs.edit().putBoolean("vpn_active", true).apply()
     }
 
     private fun disconnectVpnService() {
-        launchVpnService(NetSwapVpnService.ACTION_STOP)
+        stopService(Intent(this, NetSwapVpnService::class.java))
+        vpnState.value = false
         prefs.edit().putBoolean("vpn_active", false).apply()
     }
 
@@ -81,6 +92,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val stateFilter = IntentFilter(NetSwapVpnService.ACTION_STATE)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(vpnStateReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(vpnStateReceiver, stateFilter)
+        }
+        vpnState.value = NetSwapVpnService.isTunnelActive
         val initial = runCatching {
             val refresh = prefs.getString("refresh_token", null) ?: return@runCatching null
             val token = prefs.getString("access_token", null) ?: ""
@@ -95,7 +114,7 @@ class MainActivity : ComponentActivity() {
                 var requests by remember { mutableStateOf(emptyList<ShareRequest>()) }
                 var loading by remember { mutableStateOf(false) }
                 var message by remember { mutableStateOf("") }
-                var vpnActive by remember { mutableStateOf(prefs.getBoolean("vpn_active", false)) }
+                var vpnActive by vpnState
 
                 fun saveSession(s: AuthSession) {
                     prefs.edit().putString("access_token", s.accessToken).putString("refresh_token", s.refreshToken)
@@ -145,7 +164,7 @@ class MainActivity : ComponentActivity() {
                     HomeScreen(session!!, uid, requests, loading, message,
                         onRefresh = { loadHome(session!!) },
                         vpnActive = vpnActive,
-                        onVpnSetup = { startVpnWithNotificationPermission(); vpnActive = true },
+                        onVpnSetup = { startVpnWithNotificationPermission() },
                         onVpnDisconnect = { disconnectVpnService(); vpnActive = false },
                         onSend = { friendUid, quota ->
                             lifecycleScope.launch {
@@ -173,6 +192,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(vpnStateReceiver) }
+        super.onDestroy()
     }
 }
 
