@@ -256,6 +256,15 @@ mod tests {
     }
 
     #[test]
+    fn timer_update_is_safe_before_first_handshake() {
+        let a_private = [7u8; 32];
+        let b_private = [9u8; 32];
+        let b_public = PublicKey::from(&StaticSecret::from(b_private)).to_bytes();
+        let mut tunnel = NetSwapTunnel::new(a_private, b_public, Some(25), 3);
+        assert_eq!(tunnel.update_timers(), Ok(EngineOutput::Done));
+    }
+
+    #[test]
     fn creates_wireguard_handshake_for_valid_ipv4_packet() {
         let a_private = [7u8; 32];
         let b_private = [9u8; 32];
