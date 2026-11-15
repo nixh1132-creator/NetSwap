@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.Executors
 
 /**
  * Isolated userspace TUN lifecycle scaffold.
@@ -25,6 +26,8 @@ class NetSwapUserspaceVpnService : VpnService() {
         const val ACTION_STATE = "com.netswap.app.action.USERSPACE_VPN_STATE"
         const val EXTRA_ACTIVE = "active"
         const val EXTRA_PACKETS_READ = "packets_read"
+        const val EXTRA_REQUEST_ID = "request_id"
+        const val EXTRA_LOCAL_PUBLIC_KEY = "local_public_key"
 
         private const val CHANNEL_ID = "netswap_userspace_vpn"
         private const val NOTIFICATION_ID = 7302
@@ -36,6 +39,8 @@ class NetSwapUserspaceVpnService : VpnService() {
     private var packetDevice: AndroidTunPacketDevice? = null
     private var packetPump: TunPacketPump? = null
     private val packetsRead = AtomicLong(0)
+    private val worker = Executors.newSingleThreadExecutor()
+    @Volatile private var runtime: PacketTunnelRuntimeFactory.Runtime? = null
 
     override fun onBind(intent: Intent?): IBinder? = super.onBind(intent)
 
@@ -52,7 +57,14 @@ class NetSwapUserspaceVpnService : VpnService() {
                 stopSelf()
                 return START_NOT_STICKY
             }
-            ACTION_START -> startUserspaceVpn()
+            ACTION_START -> {
+                val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+                val publicKey = intent.getStringExtra(EXTRA_LOCAL_PUBLIC_KEY)
+                if (requestId.isNullOrBlank() || publicKey.isNullOrBlank()) {
+                    publishState(false)
+                    stopSelf()
+                } else startUserspaceVpn(requestId, publicKey)
+            }
             else -> {
                 stopSelf()
                 return START_NOT_STICKY
@@ -61,8 +73,8 @@ class NetSwapUserspaceVpnService : VpnService() {
         return START_NOT_STICKY
     }
 
-    private fun startUserspaceVpn() {
-        if (packetPump != null) return
+    private fun startUserspaceVpn(requestId: String, localPublicKey: String) {
+        if (runtime != null || packetPump != null) return
         if (VpnService.prepare(this) != null) {
             publishState(false)
             stopSelf()
@@ -70,43 +82,61 @@ class NetSwapUserspaceVpnService : VpnService() {
         }
 
         startForeground(NOTIFICATION_ID, buildNotification())
-        try {
-            val established = Builder()
-                .setSession("NetSwap isolated packet test")
-                .setMtu(1280)
-                .addAddress(TEST_INTERFACE_ADDRESS, 32)
-                .addRoute(TEST_PEER_ADDRESS, 32)
-                .establish() ?: error("Android could not establish the test TUN interface")
-
-            tun = established
-            val device = AndroidTunPacketDevice.from(established)
-            packetDevice = device
-            val pump = TunPacketPump(
-                device = device,
-                onPacket = {
-                    // Deliberately fail closed: packet forwarding is not connected yet.
-                    packetsRead.incrementAndGet()
-                },
-                onFailure = {
-                    publishState(false)
-                    stopSelf()
-                },
-                onWorkerExit = {
-                    publishState(false)
-                    stopSelf()
+        worker.execute {
+            try {
+                val prefs = getSharedPreferences("netswap_session", MODE_PRIVATE)
+                val refreshToken = prefs.getString("refresh_token", null)
+                    ?: error("Please log in again before starting the tunnel.")
+                val savedAccess = prefs.getString("access_token", "") ?: ""
+                val userId = prefs.getString("user_id", null)
+                    ?: error("Please log in again before starting the tunnel.")
+                val email = prefs.getString("email", "") ?: ""
+                val session = try {
+                    if (savedAccess.isBlank()) NetSwapApi.refresh(refreshToken)
+                    else AuthSession(savedAccess, refreshToken, userId, email)
+                } catch (_: Exception) {
+                    NetSwapApi.refresh(refreshToken)
                 }
-            )
-            packetPump = pump
-            pump.start()
-            publishState(true)
-        } catch (_: Exception) {
-            stopUserspaceVpn()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+                prefs.edit().putString("access_token", session.accessToken)
+                    .putString("refresh_token", session.refreshToken).apply()
+
+                val config = NetSwapApi.tunnelSessionConfig(session, requestId, localPublicKey)
+                val privateKey = SecureTunnelKeys.getPrivateKeyBytes(this, requestId)
+                val established = Builder()
+                    .setSession("NetSwap secure peer tunnel")
+                    .setMtu(1280)
+                    .addAddress(config.localTunnelIp, 32)
+                    .addRoute(config.remoteTunnelIp, 32)
+                    .establish() ?: error("Android could not establish the NetSwap TUN interface")
+
+                tun = established
+                val device = AndroidTunPacketDevice.from(established)
+                packetDevice = device
+                val created = PacketTunnelRuntimeFactory.create(
+                    vpnService = this,
+                    tunDevice = device,
+                    config = config,
+                    privateKey = privateKey,
+                    onFailure = {
+                        publishState(false)
+                        stopSelf()
+                    }
+                )
+                runtime = created
+                created.start()
+                publishState(true)
+            } catch (_: Exception) {
+                stopUserspaceVpn()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                publishState(false)
+                stopSelf()
+            }
         }
     }
 
     private fun stopUserspaceVpn() {
+        try { runtime?.close() } catch (_: Exception) { }
+        runtime = null
         packetPump?.close()
         packetPump = null
         packetDevice = null
@@ -176,6 +206,7 @@ class NetSwapUserspaceVpnService : VpnService() {
 
     override fun onDestroy() {
         stopUserspaceVpn()
+        worker.shutdownNow()
         super.onDestroy()
     }
 }
