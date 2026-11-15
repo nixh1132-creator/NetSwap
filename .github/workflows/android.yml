@@ -40,7 +40,7 @@ jobs:
             SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -perm -u+x | head -n 1)"
           fi
           test -x "$SDKMANAGER"
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;27.2.12479018"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;27.2.12479018" "cmake;3.22.1"
       - name: Install Android Rust target and cargo-ndk
         run: |
           rustup target add aarch64-linux-android
@@ -54,7 +54,7 @@ jobs:
           cp native/netswap-boringtun/target/aarch64-linux-android/release/libnetswap_boringtun.so app/src/main/jniLibs/arm64-v8a/libnetswap_boringtun.so
       - name: Run Android unit tests
         run: gradle testDebugUnitTest
-      - name: Build debug APK
+      - name: Build debug APK with JNI bridge
         run: gradle assembleDebug
       - name: Upload APK
         uses: actions/upload-artifact@v4
