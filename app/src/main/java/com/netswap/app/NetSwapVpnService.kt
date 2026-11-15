@@ -57,7 +57,7 @@ class NetSwapVpnService : Service() {
         Thread {
             try {
                 val configFile = File(filesDir, "netswap-wg.conf")
-                check(configFile.isFile && configFile.length() in 1..65536) {
+                check(configFile.isFile && configFile.length() in 1L..65536L) {
                     "Import a valid WireGuard configuration first."
                 }
                 val config = FileInputStream(configFile).use { Config.parse(it) }
