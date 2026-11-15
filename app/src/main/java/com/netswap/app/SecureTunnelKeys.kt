@@ -40,6 +40,16 @@ object SecureTunnelKeys {
         return Pair(pair.publicKey.toBase64(), privateKeyBase64)
     }
 
+    /** Returns the device-local private key bytes for the tunnel runtime. Never upload or log this value. */
+    @Synchronized
+    fun getPrivateKeyBytes(context: Context, requestId: String): ByteArray {
+        require(requestId.matches(Regex("^[0-9a-fA-F-]{36}$"))) { "Invalid sharing request." }
+        val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(requestId, null)
+            ?: throw IllegalStateException("This phone has not prepared a tunnel key for this request.")
+        val privateKeyBase64 = decrypt(stored)
+        return Key.fromBase64(privateKeyBase64).key
+    }
+
     private fun secretKey(): SecretKey {
         val store = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
         val existing = store.getKey(AES_ALIAS, null) as? SecretKey
