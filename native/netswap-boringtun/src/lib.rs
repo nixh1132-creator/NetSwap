@@ -4,7 +4,6 @@
 
 use boringtun::noise::{Tunn, TunnResult};
 use boringtun::x25519::{PublicKey, StaticSecret};
-use std::net::IpAddr;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum EngineOutput {
@@ -154,7 +153,7 @@ pub unsafe extern "C" fn netswap_tunnel_new(
 #[no_mangle]
 pub unsafe extern "C" fn netswap_tunnel_free(handle: *mut NetSwapTunnel) {
     if !handle.is_null() {
-        let _ = std::panic::catch_unwind(|| drop(Box::from_raw(handle)));
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(Box::from_raw(handle))));
     }
 }
 
