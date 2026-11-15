@@ -37,6 +37,7 @@ begin
    where not exists (
      select 1 from public.tunnel_sessions t
       where t.id <> p_session_id
+        and t.status in ('provisioning','ready','active')
         and (t.sender_tunnel_ip = ('10.77.0.' || n)::inet
           or t.receiver_tunnel_ip = ('10.77.0.' || n)::inet)
    )
@@ -49,6 +50,7 @@ begin
      and not exists (
        select 1 from public.tunnel_sessions t
         where t.id <> p_session_id
+          and t.status in ('provisioning','ready','active')
           and (t.sender_tunnel_ip = ('10.77.0.' || n)::inet
             or t.receiver_tunnel_ip = ('10.77.0.' || n)::inet)
      )
