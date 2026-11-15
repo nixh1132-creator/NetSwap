@@ -1,6 +1,9 @@
 package com.netswap.app
 
 import android.os.Bundle
+import android.content.Intent
+import android.net.VpnService
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -33,6 +36,18 @@ private val Mint = Color(0xFFDDF2E8)
 private val White = Color(0xFFFFFFFF)
 
 class MainActivity : ComponentActivity() {
+    private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            startService(Intent(this, NetSwapVpnService::class.java).setAction(NetSwapVpnService.ACTION_START))
+        }
+    }
+
+    private fun requestVpnSetup() {
+        val prepareIntent = VpnService.prepare(this)
+        if (prepareIntent != null) vpnPermissionLauncher.launch(prepareIntent)
+        else startService(Intent(this, NetSwapVpnService::class.java).setAction(NetSwapVpnService.ACTION_START))
+    }
+
     private val prefs by lazy { getSharedPreferences("netswap_session", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,6 +114,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     HomeScreen(session!!, uid, requests, loading, message,
                         onRefresh = { loadHome(session!!) },
+                        onVpnSetup = { requestVpnSetup() },
                         onSend = { friendUid, quota ->
                             lifecycleScope.launch {
                                 loading = true; message = ""
@@ -157,7 +173,7 @@ private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,Strin
 
 @Composable
 private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
-    onRefresh: () -> Unit, onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit, onLogout: ()->Unit) {
+    onRefresh: () -> Unit, onVpnSetup: () -> Unit, onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit, onLogout: ()->Unit) {
     var friendUid by remember { mutableStateOf("") }
     var quota by remember { mutableStateOf(500L * 1024 * 1024) }
     var showSend by remember { mutableStateOf(false) }
@@ -181,6 +197,8 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                 Button(onClick = { showSend = !showSend }, modifier = Modifier.weight(1f)) { Text("Send data request") }
                 OutlinedButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
             }
+            OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Set up VPN permission (test)") }
+            Text("VPN foundation only: this test route does not share or proxy internet yet.", color = Muted, fontSize = 11.sp)
             if (showSend) {
                 Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
                     Text("Friend's NetSwap UID", fontWeight = FontWeight.SemiBold)
