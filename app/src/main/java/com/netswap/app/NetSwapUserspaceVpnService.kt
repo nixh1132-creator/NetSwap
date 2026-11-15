@@ -28,6 +28,7 @@ class NetSwapUserspaceVpnService : VpnService() {
         const val EXTRA_PACKETS_READ = "packets_read"
         const val EXTRA_REQUEST_ID = "request_id"
         const val EXTRA_LOCAL_PUBLIC_KEY = "local_public_key"
+        const val EXTRA_ERROR = "error"
 
         private const val CHANNEL_ID = "netswap_userspace_vpn"
         private const val NOTIFICATION_ID = 7302
@@ -125,10 +126,11 @@ class NetSwapUserspaceVpnService : VpnService() {
                 runtime = created
                 created.start()
                 publishState(true)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 stopUserspaceVpn()
                 stopForeground(STOP_FOREGROUND_REMOVE)
-                publishState(false)
+                val reason = e.message?.take(180) ?: "Secure tunnel could not start."
+                publishState(false, reason)
                 stopSelf()
             }
         }
@@ -145,13 +147,13 @@ class NetSwapUserspaceVpnService : VpnService() {
         publishState(false)
     }
 
-    private fun publishState(active: Boolean) {
-        sendBroadcast(
-            Intent(ACTION_STATE)
-                .setPackage(packageName)
-                .putExtra(EXTRA_ACTIVE, active)
-                .putExtra(EXTRA_PACKETS_READ, packetsRead.get())
-        )
+    private fun publishState(active: Boolean, error: String? = null) {
+        val state = Intent(ACTION_STATE)
+            .setPackage(packageName)
+            .putExtra(EXTRA_ACTIVE, active)
+            .putExtra(EXTRA_PACKETS_READ, packetsRead.get())
+        if (!error.isNullOrBlank()) state.putExtra(EXTRA_ERROR, error)
+        sendBroadcast(state)
     }
 
     private fun createNotificationChannel() {
