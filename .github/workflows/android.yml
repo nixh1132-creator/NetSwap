@@ -29,10 +29,13 @@ jobs:
       - name: Test pinned userspace WireGuard wrapper
         working-directory: native/netswap-boringtun
         run: cargo test
-      - name: Set up Android NDK
-        uses: android-actions/setup-android@v3
       - name: Install Android NDK
-        run: sdkmanager "ndk;27.2.12479018"
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          yes | sdkmanager --sdk_root="$ANDROID_HOME" "ndk;27.2.12479018"
       - name: Install Android Rust target and cargo-ndk
         run: |
           rustup target add aarch64-linux-android
