@@ -74,3 +74,8 @@ No public UDP WireGuard relay/gateway endpoint is provisioned. The database's `g
 ## Request cancellation revocation safety
 
 A database trigger now marks a tunnel session `revoked` immediately when its parent sharing request changes away from `approved`. Existing orphaned sessions for already-cancelled/rejected requests are backfilled to `revoked`. This is a control-plane safety state transition; the future relay agent must watch revoked sessions and remove the corresponding WireGuard peer. It does not itself terminate a live peer until that relay agent is implemented.
+
+
+## Bidirectional quota accounting primitive
+
+A thread-safe `SessionTrafficQuota` primitive now reserves each packet's byte count against one shared bidirectional session budget. It rejects a packet that would exceed the remaining allowance, closes the budget on exact exhaustion or explicit revocation, and exposes a read-only snapshot for UI/reporting. Unit tests cover both directions, exact exhaustion, over-limit rejection, revocation, and invalid sizes. This is not yet wired into a TUN or forwarding engine; callers must not treat it as live quota enforcement until every forwarded packet is accounted before transmission.
