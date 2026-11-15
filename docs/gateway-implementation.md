@@ -69,3 +69,8 @@ This is control-plane groundwork only. It does not create a WireGuard interface,
 ## Current hard blocker before real packet forwarding
 
 No public UDP WireGuard relay/gateway endpoint is provisioned. The database's `gateway_endpoint` is metadata only. Do not create peer configs with a placeholder endpoint or mark a session ready. The next milestone requires choosing and provisioning a reachable relay/gateway host, then implementing a userspace packet-forwarding data plane with per-session byte counters and revocation.
+
+
+## Request cancellation revocation safety
+
+A database trigger now marks a tunnel session `revoked` immediately when its parent sharing request changes away from `approved`. Existing orphaned sessions for already-cancelled/rejected requests are backfilled to `revoked`. This is a control-plane safety state transition; the future relay agent must watch revoked sessions and remove the corresponding WireGuard peer. It does not itself terminate a live peer until that relay agent is implemented.
