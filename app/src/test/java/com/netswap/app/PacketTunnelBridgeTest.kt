@@ -97,6 +97,34 @@ class PacketTunnelBridgeTest {
         }
     }
 
+
+    @Test fun exactQuotaExhaustionClosesBridgeImmediately() {
+        DatagramSocket(0, InetAddress.getLoopbackAddress()).use { gateway ->
+            gateway.soTimeout = 2_000
+            val tun = FakeTunDevice()
+            val bridge = PacketTunnelBridge(
+                tunDevice = tun,
+                engine = FakeEngine(),
+                endpoint = InetSocketAddress(InetAddress.getLoopbackAddress(), gateway.localPort),
+                protectSocket = { true },
+                quotaBytes = 20
+            )
+            try {
+                bridge.start()
+                tun.incoming.put(ipv4Packet())
+                val encrypted = DatagramPacket(ByteArray(128), 128)
+                gateway.receive(encrypted)
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+                while (!tun.closed.get() && System.nanoTime() < deadline) Thread.sleep(10)
+                assertTrue("Bridge should close as soon as quota reaches zero", tun.closed.get())
+                assertEquals(0L, bridge.snapshot().remainingBytes)
+                assertTrue(!bridge.snapshot().active)
+            } finally {
+                bridge.close()
+            }
+        }
+    }
+
     @Test fun revokeStopsFurtherTunPackets() {
         DatagramSocket(0, InetAddress.getLoopbackAddress()).use { gateway ->
             val tun = FakeTunDevice()
