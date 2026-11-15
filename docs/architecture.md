@@ -30,12 +30,14 @@ Every account receives a server-generated UID such as `NS-XXXXXXXXXX`. A user ca
 5. [ ] Add UID profile display and exact UID lookup.
 6. [ ] Add sharing request UI and consent workflow.
 7. [ ] Verify VPN lifecycle and stop/revoke behavior on physical Android devices.
-8. [ ] Select and integrate an audited tunnel protocol (prefer WireGuard; do not invent cryptography).
-9. [ ] Build a sender gateway with packet forwarding/NAT and a receiver client; prove direct connectivity on two phones.
-10. [ ] Add relay coordination for carrier NAT/firewall cases.
-11. [ ] Enforce quotas and revocation in the gateway/data plane, not in UI counters.
-12. [ ] Test carrier compatibility, battery behavior, privacy, and failure recovery.
+8. [x] Select the official WireGuard Android tunnel library and add it as an app dependency.
+9. [ ] Integrate WireGuard backend lifecycle and secure peer configuration (keys must be provisioned securely).
+10. [ ] Build a sender gateway with packet forwarding/NAT and a receiver client; prove direct connectivity on two phones.
+11. [ ] Add relay coordination for carrier NAT/firewall cases.
+12. [ ] Enforce quotas and revocation in the gateway/data plane, not in UI counters.
+13. [ ] Test carrier compatibility, battery behavior, privacy, and failure recovery.
+
 
 ## Current limitations
 
-The current database is only the control-plane foundation. It does not create a VPN tunnel, forward packets, make one phone an internet gateway, or guarantee that a mobile carrier permits tethering. A working remote-sharing prototype still needs Android VPN/tethering engineering and a tested gateway/relay service.
+The app now includes the official WireGuard Android tunnel library, but the existing test VPN service still uses only a local host route. No WireGuard peer has been provisioned yet, and no packets are forwarded to a sender phone. The product still needs secure peer provisioning, sender-side packet forwarding/NAT, a relay path for restrictive NATs, and data-plane quota/revocation enforcement. Carrier tethering policies may also restrict this use.
