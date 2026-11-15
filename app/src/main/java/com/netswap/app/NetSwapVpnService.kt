@@ -74,12 +74,17 @@ class NetSwapVpnService : VpnService() {
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val disconnectIntent = PendingIntent.getService(
+            this, 1, Intent(this, NetSwapVpnService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_warning)
                 .setContentTitle("NetSwap test tunnel")
                 .setContentText("Local VPN route test only — internet proxy is not active")
                 .setContentIntent(openApp)
+                .addAction(Notification.Action.Builder(null, "Disconnect VPN", disconnectIntent).build())
                 .setOngoing(true)
                 .build()
         } else {
@@ -89,6 +94,7 @@ class NetSwapVpnService : VpnService() {
                 .setContentTitle("NetSwap test tunnel")
                 .setContentText("Local VPN route test only — internet proxy is not active")
                 .setContentIntent(openApp)
+                .addAction(0, "Disconnect VPN", disconnectIntent)
                 .setOngoing(true)
                 .build()
         }
