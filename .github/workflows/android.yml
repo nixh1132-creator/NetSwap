@@ -24,6 +24,11 @@ jobs:
         run: python3 -m py_compile scripts/netswap-relay-agent.py
       - name: Test relay agent safety behavior
         run: python3 -m unittest discover -s tests -v
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Test pinned userspace WireGuard wrapper
+        working-directory: native/netswap-boringtun
+        run: cargo test --locked
       - name: Run Android unit tests
         run: gradle testDebugUnitTest
       - name: Build debug APK
