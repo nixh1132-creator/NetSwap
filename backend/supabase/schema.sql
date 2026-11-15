@@ -142,3 +142,32 @@ grant execute on function public.lookup_netswap_user_by_uid(text) to authenticat
 
 revoke all on function private.generate_netswap_uid() from public, anon, authenticated;
 revoke all on function private.handle_new_netswap_user() from public, anon, authenticated;
+
+-- Only the receiver may approve/reject a pending request.
+grant update (status, responded_at, updated_at) on public.sharing_requests to authenticated;
+
+drop policy if exists "Receiver can respond to pending request" on public.sharing_requests;
+create policy "Receiver can respond to pending request"
+  on public.sharing_requests for update to authenticated
+  using (
+    (select auth.uid()) = receiver_id
+    and status = 'pending'
+  )
+  with check (
+    (select auth.uid()) = receiver_id
+    and status in ('approved', 'rejected')
+    and responded_at is not null
+  );
+
+-- The sender may cancel a pending or approved request.
+drop policy if exists "Sender can cancel own request" on public.sharing_requests;
+create policy "Sender can cancel own request"
+  on public.sharing_requests for update to authenticated
+  using (
+    (select auth.uid()) = sender_id
+    and status in ('pending', 'approved')
+  )
+  with check (
+    (select auth.uid()) = sender_id
+    and status = 'cancelled'
+  );
