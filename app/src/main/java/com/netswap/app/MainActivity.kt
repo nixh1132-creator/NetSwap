@@ -48,8 +48,12 @@ class MainActivity : ComponentActivity() {
     private val vpnState = mutableStateOf(false)
     private val vpnStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == NetSwapVpnService.ACTION_STATE) {
-                vpnState.value = intent.getBooleanExtra(NetSwapVpnService.EXTRA_ACTIVE, false)
+            when (intent?.action) {
+                NetSwapVpnService.ACTION_STATE -> vpnState.value = intent.getBooleanExtra(NetSwapVpnService.EXTRA_ACTIVE, false)
+                NetSwapUserspaceVpnService.ACTION_STATE -> {
+                    vpnState.value = intent.getBooleanExtra(NetSwapUserspaceVpnService.EXTRA_ACTIVE, false)
+                    intent.getStringExtra(NetSwapUserspaceVpnService.EXTRA_ERROR)?.let { Toast.makeText(this@MainActivity, it, Toast.LENGTH_LONG).show() }
+                }
             }
         }
     }
@@ -112,6 +116,44 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode == RESULT_OK) startVpnService()
     }
 
+    private var pendingTunnelRequestId: String? = null
+    private var pendingTunnelPublicKey: String? = null
+    private val userspaceVpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val id = pendingTunnelRequestId
+        val key = pendingTunnelPublicKey
+        pendingTunnelRequestId = null
+        pendingTunnelPublicKey = null
+        if (result.resultCode == RESULT_OK && id != null && key != null) launchUserspaceVpn(id, key)
+        else Toast.makeText(this, "VPN permission is required.", Toast.LENGTH_LONG).show()
+    }
+
+    private fun launchUserspaceVpn(id: String, key: String) {
+        val intent = Intent(this, NetSwapUserspaceVpnService::class.java)
+            .setAction(NetSwapUserspaceVpnService.ACTION_START)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_REQUEST_ID, id)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_LOCAL_PUBLIC_KEY, key)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+    }
+
+    private fun requestUserspaceTunnel(request: ShareRequest) {
+        lifecycleScope.launch {
+            try {
+                val key = withContext(Dispatchers.IO) { SecureTunnelKeys.getOrCreate(this@MainActivity, request.id).first }
+                pendingTunnelRequestId = request.id
+                pendingTunnelPublicKey = key
+                val prepare = VpnService.prepare(this@MainActivity)
+                if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
+                else {
+                    pendingTunnelRequestId = null
+                    pendingTunnelPublicKey = null
+                    launchUserspaceVpn(request.id, key)
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, e.message ?: "Could not start secure tunnel.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     private fun requestVpnSetup() {
         val prepareIntent = VpnService.prepare(this)
         if (prepareIntent != null) vpnPermissionLauncher.launch(prepareIntent)
@@ -122,7 +164,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val stateFilter = IntentFilter(NetSwapVpnService.ACTION_STATE)
+        val stateFilter = IntentFilter().apply {
+            addAction(NetSwapVpnService.ACTION_STATE)
+            addAction(NetSwapUserspaceVpnService.ACTION_STATE)
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(vpnStateReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -218,6 +263,7 @@ class MainActivity : ComponentActivity() {
                                 catch (e: Exception) { message = e.message ?: "Could not update request."; loading = false }
                             }
                         },
+                        onStartTunnel = { request -> requestUserspaceTunnel(request) },
                         onPrepareTunnel = { request ->
                             lifecycleScope.launch {
                                 loading = true
@@ -284,7 +330,7 @@ private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,Strin
 private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
     vpnActive: Boolean, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
     onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
-    onPrepareTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
+    onPrepareTunnel: (ShareRequest)->Unit, onStartTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
     var friendUid by remember { mutableStateOf("") }
     var quota by remember { mutableStateOf(500L * 1024 * 1024) }
     var showSend by remember { mutableStateOf(false) }
@@ -352,6 +398,7 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("Prepare secure tunnel key") }
                             Text("Creates a device-protected key and registers only its public part.", color = Muted, fontSize = 11.sp)
+                            OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start secure peer tunnel") }
                         }
                     }
                 }
