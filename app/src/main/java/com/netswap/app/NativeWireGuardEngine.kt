@@ -34,23 +34,22 @@ class NativeWireGuardEngine(
         if (closed) return WireGuardEngineResult.Failure("Tunnel is closed")
         return try {
             val encoded = if (decrypt) nativeDecapsulate(handle, input) else nativeEncapsulate(handle, input)
-            if (encoded.isEmpty()) return WireGuardEngineResult.Failure("Native result is malformed")
-            val kind = encoded[0].toInt() and 0xff
-            val bytes = encoded.copyOfRange(1, encoded.size)
-            when (kind) {
-                0 -> WireGuardEngineResult.NoPacket
-                1, 2, 3 -> WireGuardEngineResult.Packet(bytes)
-                else -> WireGuardEngineResult.Failure("Unknown native output type")
-            }
+            decodeNativeResult(encoded)
         } catch (e: Exception) {
             WireGuardEngineResult.Failure(e.message ?: "Native packet processing failed")
         }
     }
 
-    /** BoringTun timer integration is intentionally pending; no keepalive is fabricated. */
+    /** Advance BoringTun timers; any returned network datagram must be sent by UDP transport. */
     @Synchronized
-    override fun tick(): WireGuardEngineResult =
-        if (closed) WireGuardEngineResult.Failure("Tunnel is closed") else WireGuardEngineResult.NoPacket
+    override fun tick(): WireGuardEngineResult {
+        if (closed) return WireGuardEngineResult.Failure("Tunnel is closed")
+        return try {
+            decodeNativeResult(nativeTick(handle))
+        } catch (e: Exception) {
+            WireGuardEngineResult.Failure(e.message ?: "Native timer update failed")
+        }
+    }
 
     @Synchronized
     override fun close() {
@@ -65,4 +64,16 @@ class NativeWireGuardEngine(
     private external fun nativeFree(handle: Long)
     private external fun nativeEncapsulate(handle: Long, packet: ByteArray): ByteArray
     private external fun nativeDecapsulate(handle: Long, datagram: ByteArray): ByteArray
+    private external fun nativeTick(handle: Long): ByteArray
+
+    private fun decodeNativeResult(encoded: ByteArray): WireGuardEngineResult {
+        if (encoded.isEmpty()) return WireGuardEngineResult.Failure("Native result is malformed")
+        val kind = encoded[0].toInt() and 0xff
+        val bytes = encoded.copyOfRange(1, encoded.size)
+        return when (kind) {
+            0 -> WireGuardEngineResult.NoPacket
+            1, 2, 3 -> WireGuardEngineResult.Packet(bytes)
+            else -> WireGuardEngineResult.Failure("Unknown native output type")
+        }
+    }
 }
