@@ -40,6 +40,21 @@ def wg(*args: str) -> None:
     subprocess.run(["wg", *args], check=True, stdout=subprocess.DEVNULL)
 
 
+def existing_peers() -> set[str]:
+    result = subprocess.run(
+        ["wg", "show", WG_INTERFACE, "peers"],
+        check=True, capture_output=True, text=True,
+    )
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def remove_peer_if_present(key: str, peers: set[str]) -> None:
+    # Idempotent removal: revoked sessions are polled repeatedly.
+    if key in peers:
+        wg("set", WG_INTERFACE, "peer", key, "remove")
+        peers.discard(key)
+
+
 def valid_key(value: str) -> bool:
     try:
         decoded = base64.b64decode(value, validate=True)
@@ -60,6 +75,7 @@ def reconcile() -> None:
         "limit": "100",
     })
     sessions = http_json("/tunnel_sessions?" + query) or []
+    peers = existing_peers()
 
     for session in sessions:
         status = session["status"]
@@ -68,7 +84,7 @@ def reconcile() -> None:
         if status in ("revoked", "expired", "failed"):
             for key in keys:
                 if key and valid_key(key):
-                    wg("set", WG_INTERFACE, "peer", key, "remove")
+                    remove_peer_if_present(key, peers)
             continue
 
         if not all(keys):
@@ -99,7 +115,9 @@ def reconcile() -> None:
         # Hub peer registration only. No route forwarding, NAT, quota enforcement,
         # or session-ready transition is performed here.
         wg("set", WG_INTERFACE, "peer", keys[0], "allowed-ips", sender_ip + "/32")
+        peers.add(keys[0])
         wg("set", WG_INTERFACE, "peer", keys[1], "allowed-ips", receiver_ip + "/32")
+        peers.add(keys[1])
 
 
 def main() -> None:
