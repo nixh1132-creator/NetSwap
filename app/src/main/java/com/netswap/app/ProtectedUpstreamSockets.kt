@@ -20,7 +20,7 @@ import java.net.Socket
 class ProtectedUpstreamSockets(
     private val vpnService: VpnService,
     private val upstreamNetwork: Network? = null
-) : Closeable, TcpUpstreamOpener {
+) : Closeable, TcpUpstreamOpener, UdpUpstreamOpener {
     private val sockets = LinkedHashSet<Closeable>()
     private var closed = false
 
@@ -47,7 +47,7 @@ class ProtectedUpstreamSockets(
     }
 
     @Synchronized
-    fun openUdp(): DatagramSocket {
+    override fun openUdp(): DatagramSocket {
         check(!closed) { "Upstream socket factory is closed" }
         val socket = DatagramSocket(null)
         try {
