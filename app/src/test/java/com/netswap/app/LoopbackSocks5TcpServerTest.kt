@@ -145,4 +145,75 @@ class LoopbackSocks5TcpServerTest {
         }
     }
 
+
+    @Test
+    fun enforcesOneSharedQuotaAcrossTcpUploadAndDownload() {
+        val echoServer = java.net.ServerSocket()
+        echoServer.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
+        val echoWorker = Thread {
+            try {
+                echoServer.accept().use { remote ->
+                    val buffer = ByteArray(32)
+                    val count = remote.getInputStream().read(buffer)
+                    if (count > 0) {
+                        remote.getOutputStream().write(buffer, 0, count)
+                        remote.getOutputStream().flush()
+                    }
+                }
+            } catch (_: Exception) { }
+        }.apply { isDaemon = true; start() }
+        val quota = SessionTrafficQuota(6)
+        val server = LoopbackSocks5TcpServer(
+            TcpUpstreamOpener { destination, timeout ->
+                Socket().apply { connect(destination, timeout) }
+            },
+            "user", "pass",
+            quota = quota
+        )
+        try {
+            val port = server.start()
+            Socket("127.0.0.1", port).use { client ->
+                client.soTimeout = 3_000
+                val input = client.getInputStream()
+                val output = client.getOutputStream()
+                output.write(byteArrayOf(5, 1, 2)); output.flush()
+                assertEquals(5, input.read()); assertEquals(2, input.read())
+                output.write(byteArrayOf(1, 4) + "user".toByteArray() + byteArrayOf(4) + "pass".toByteArray())
+                output.flush()
+                assertEquals(1, input.read()); assertEquals(0, input.read())
+                val address = InetAddress.getByName("127.0.0.1").address
+                output.write(byteArrayOf(5, 1, 0, 1) + address + byteArrayOf(
+                    (echoServer.localPort ushr 8).toByte(), echoServer.localPort.toByte()
+                ))
+                output.flush()
+                val reply = ByteArray(10)
+                var offset = 0
+                while (offset < reply.size) {
+                    val count = input.read(reply, offset, reply.size - offset)
+                    check(count > 0); offset += count
+                }
+                assertEquals(0, reply[1].toInt())
+                output.write("abc".toByteArray()); output.flush()
+                val response = ByteArray(3)
+                offset = 0
+                while (offset < response.size) {
+                    val count = input.read(response, offset, response.size - offset)
+                    if (count < 0) break
+                    offset += count
+                }
+                assertEquals("abc", String(response, 0, offset))
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+                while (quota.snapshot().active && System.nanoTime() < deadline) Thread.sleep(10)
+                assertEquals(6L, quota.snapshot().totalBytes)
+                assertEquals(3L, quota.snapshot().receivedFromReceiverBytes)
+                assertEquals(3L, quota.snapshot().sentToReceiverBytes)
+                assertTrue(!quota.snapshot().active)
+            }
+        } finally {
+            server.close()
+            echoServer.close()
+            echoWorker.join(1_000)
+        }
+    }
+
 }
