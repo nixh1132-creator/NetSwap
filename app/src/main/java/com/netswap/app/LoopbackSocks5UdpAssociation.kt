@@ -25,6 +25,7 @@ class LoopbackSocks5UdpAssociation(
     private val maxDatagramBytes: Int = 65_507
 ) : Closeable {
     private val closed = AtomicBoolean(false)
+    private val started = AtomicBoolean(false)
     @Volatile private var relay: DatagramSocket? = null
     @Volatile private var upstreamSocket: DatagramSocket? = null
     @Volatile private var clientEndpoint: InetSocketAddress? = null
@@ -35,10 +36,9 @@ class LoopbackSocks5UdpAssociation(
     init { require(maxDatagramBytes in 512..65_507) }
 
     /** Starts an association and writes the SOCKS5 success reply to the control stream. */
-    @Synchronized
     fun run(controlSocket: Socket, output: OutputStream) {
         check(!closed.get()) { "UDP association is closed" }
-        check(relay == null) { "UDP association already started" }
+        check(started.compareAndSet(false, true)) { "UDP association already started" }
         require(controlSocket.inetAddress.isLoopbackAddress) { "Control peer must be loopback" }
         control = controlSocket
         val localRelay = DatagramSocket(null)
