@@ -97,12 +97,14 @@ class LoopbackSocks5TcpServerTest {
                 echo.send(java.net.DatagramPacket(echoed, echoed.size, packet.socketAddress))
             } catch (_: Exception) { }
         }.apply { isDaemon = true; start() }
+        val quota = SessionTrafficQuota(22)
         val server = LoopbackSocks5TcpServer(
             TcpUpstreamOpener { _, _ -> error("TCP path not used") },
             "user", "pass",
             udpUpstream = UdpUpstreamOpener {
                 java.net.DatagramSocket(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
-            }
+            },
+            quota = quota
         )
         try {
             val port = server.start()
@@ -136,6 +138,12 @@ class LoopbackSocks5TcpServerTest {
                     val decoded = Socks5UdpPacket.decode(response.data.copyOf(response.length))
                     assertEquals(target, decoded!!.destination)
                     assertEquals("netswap-udp", String(decoded.payload))
+                    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+                    while (quota.snapshot().active && System.nanoTime() < deadline) Thread.sleep(10)
+                    assertEquals(22L, quota.snapshot().totalBytes)
+                    assertEquals(11L, quota.snapshot().receivedFromReceiverBytes)
+                    assertEquals(11L, quota.snapshot().sentToReceiverBytes)
+                    assertTrue(!quota.snapshot().active)
                 }
             }
         } finally {
