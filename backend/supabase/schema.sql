@@ -213,8 +213,8 @@ create or replace function public.revoke_tunnel_session_for_closed_request()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
-as $$
+set search_path = ''
+as $
 begin
   if new.status <> 'approved' and old.status is distinct from new.status then
     update public.tunnel_sessions
@@ -226,7 +226,10 @@ begin
   end if;
   return new;
 end;
-$$;
+$;
+
+revoke all on function public.revoke_tunnel_session_for_closed_request()
+  from public, anon, authenticated;
 
 drop trigger if exists trg_revoke_tunnel_on_request_close on public.sharing_requests;
 create trigger trg_revoke_tunnel_on_request_close
