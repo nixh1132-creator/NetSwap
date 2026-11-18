@@ -109,6 +109,10 @@ class NetSwapUserspaceVpnService : VpnService() {
 
                 val config = NetSwapApi.tunnelSessionConfig(session, requestId, localPublicKey)
                 val privateKey = SecureTunnelKeys.getPrivateKeyBytes(this, requestId)
+                val senderUpstreamNetwork = if (config.isSender) {
+                    CellularUpstreamNetwork.find(this)
+                        ?: error("Sender phone needs a validated cellular Internet connection.")
+                } else null
                 val established = Builder()
                     .setSession("NetSwap secure peer tunnel")
                     .setMtu(1280)
@@ -127,6 +131,7 @@ class NetSwapUserspaceVpnService : VpnService() {
                         tunDevice = device,
                         config = config,
                         privateKey = privateKey,
+                        senderUpstreamNetwork = senderUpstreamNetwork,
                         onFailure = {
                             publishState(false)
                             stopSelf()
