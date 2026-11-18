@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class SenderSocks5Runtime(
     upstream: ProtectedUpstreamSockets,
     quota: SessionTrafficQuota? = null,
-    bindAddress: InetAddress = InetAddress.getByName("127.0.0.1")
+    private val bindAddress: InetAddress = InetAddress.getByName("127.0.0.1")
 ) : Closeable {
     data class Info(
         val host: String,
