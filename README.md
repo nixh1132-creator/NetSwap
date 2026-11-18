@@ -1,38 +1,57 @@
 # NetSwap
 
-NetSwap is an Android app concept for permission-based internet sharing between users identified by unique UIDs.
+NetSwap is an Android app for permission-based internet sharing between users identified by unique UIDs.
 
 ## Product goal
 
-A sender can approve a specific receiver UID and grant a defined data allowance. The receiver can use the sender's internet connection through a secure, routed connection. Sharing must be revocable and limited by measured usage.
+A sender approves a specific receiver UID and grants a defined data allowance. The receiver should use the sender's internet connection through a secure, routed connection. Sharing must be revocable and limited by gateway-measured usage.
 
-## Important technical constraints
+## Current implementation status
 
-- A UID identifies an account; it is not an authentication secret or a network tunnel.
-- Android's `VpnService` can create a local TUN interface, but it does not by itself make the phone a gateway for another user's traffic.
-- Remote sharing requires a secure tunnel, sender-side packet forwarding/NAT, routing, and often relay infrastructure for NAT/firewall traversal.
-- Mobile carrier terms, tethering restrictions, Android background execution, battery use, and data costs must be considered.
-- Data quotas must be enforced by the traffic gateway, not only by a client-side counter.
-- Never promise unlimited or reliable remote sharing until it has been tested across real mobile networks.
+### Implemented
+
+- Android account/session handling and server-generated NetSwap UIDs.
+- Exact UID lookup and consent-based sharing requests.
+- Receiver approval/rejection and sender cancellation.
+- Supabase RLS-protected profiles, requests, and server-managed tunnel-session metadata.
+- Device-local WireGuard key generation; private keys are encrypted with Android Keystore and public keys are registered through an authenticated Edge Function.
+- Unique tunnel-IP allocation RPC and a relay peer reconciler that installs/removes WireGuard peers on a controlled Ubuntu hub.
+- A userspace WireGuard engine, Android TUN packet device, protected UDP transport, IPv4 packet inspection, and bidirectional local quota-gate primitives.
+- Sender-side protected upstream sockets and an authenticated loopback SOCKS5 TCP/UDP runtime prototype.
+- Android, Rust, relay-agent, and packet/quota unit tests in GitHub Actions.
+
+## Not yet end-to-end internet sharing
+
+The current build is still a prototype. A sender SOCKS5 runtime exists, but it is not yet connected to a complete TUN-to-SOCKS packet translation path. The receiver-to-sender-to-internet packet route has not been proven on two physical phones.
+
+A reachable WireGuard relay endpoint is also not provisioned. The relay reconciler is peer-only: it does not enable IP forwarding/NAT, bridge receiver traffic to the sender, count authoritative traffic, enforce a hard server-side quota, or mark sessions ready/active.
+
+Do not treat an approved request, registered keys, installed hub peers, or a running VPN as proof that mobile internet is being shared.
 
 ## Planned architecture
 
-1. **Android client (Kotlin):** onboarding, account, UID, friend lookup, sharing requests, consent, usage display, and connection controls.
-2. **Identity/control plane (Supabase):** authentication, profiles, UID mapping, sharing grants, device/session metadata, and usage summaries. Enable Row Level Security on exposed tables.
-3. **Data plane (separate networking service):** WireGuard-based secure transport or another reviewed tunnel design, sender gateway packet forwarding/NAT, relay/STUN/TURN as required, and server-side quota enforcement.
-4. **Operations:** explicit consent, revoke/stop controls, abuse prevention, logs with minimal personal data, and clear data-cost warnings.
+1. **Android client:** account, UID, friend lookup, consent, connection controls, usage display, and explicit stop/revoke.
+2. **Supabase control plane:** authentication, profiles, sharing grants, public-key registration, and session metadata. Exposed tables use RLS; privileged gateway actions stay server-side.
+3. **WireGuard relay:** reachable UDP endpoint, isolated peers per approved session, and revocation.
+4. **Sender gateway:** userspace TUN-to-SOCKS/IP-stack bridge, protected sockets bound to the selected upstream network, and return-packet routing.
+5. **Trusted quota enforcement:** atomic accounting of both traffic directions and immediate cutoff at quota exhaustion or revocation.
 
-## MVP milestones
+## Next milestones
 
-- [ ] Confirm product rules and threat model.
-- [ ] Create Android project skeleton and build a basic APK.
-- [ ] Implement authentication and unique UID profiles.
-- [ ] Implement friend lookup and consent-based sharing requests.
-- [ ] Prototype nearby sharing first and verify packet routing.
-- [ ] Prototype remote tunnel and sender-side gateway.
-- [ ] Add enforceable data quotas, usage reporting, and disconnect behavior.
-- [ ] Test on two physical Android devices and multiple carriers.
+- [x] Account, UID, request, and consent workflow.
+- [x] Local WireGuard key generation and authenticated public-key registration.
+- [x] Userspace WireGuard and packet-gate prototype.
+- [x] Sender loopback SOCKS5 runtime prototype.
+- [ ] Complete the sender TUN-to-SOCKS packet bridge and return path.
+- [ ] Provision a reachable, eligible free relay endpoint (no paid resources without explicit approval).
+- [ ] Securely provision per-session relay peers and verify a WireGuard handshake.
+- [ ] Enforce quotas and revocation in the actual forwarding path.
+- [ ] Test TCP, UDP, DNS, quota exhaustion, disconnect, sleep/wake, and network changes on two physical Android devices.
 
-## Current status
+## Important constraints
 
-Repository initialized. No VPN, packet routing, relay, or internet-sharing feature has been implemented yet.
+- A UID is an identifier, never an authentication secret.
+- Never ship Supabase service-role keys or WireGuard private keys in the APK or repository.
+- An ordinary unrooted Android app cannot rely on kernel `iptables`, `sysctl`, or IP forwarding commands.
+- Mobile carrier tethering policies, Android background execution, battery use, and data costs must be considered.
+- Do not promise unlimited or reliable remote sharing until real multi-carrier tests pass.
