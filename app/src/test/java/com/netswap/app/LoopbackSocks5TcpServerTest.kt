@@ -84,4 +84,62 @@ class LoopbackSocks5TcpServerTest {
             server.close()
         }
     }
+
+    @Test
+    fun udpAssociateRelaysLoopbackEchoAndStopsWithControlSocket() {
+        val echo = java.net.DatagramSocket(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
+        val echoThread = Thread {
+            try {
+                val bytes = ByteArray(512)
+                val packet = java.net.DatagramPacket(bytes, bytes.size)
+                echo.receive(packet)
+                echo.send(java.net.DatagramPacket(packet.data, packet.length, packet.socketAddress))
+            } catch (_: Exception) { }
+        }.apply { isDaemon = true; start() }
+        val server = LoopbackSocks5TcpServer(
+            TcpUpstreamOpener { _, _ -> error("TCP path not used") },
+            "user", "pass",
+            udpUpstream = UdpUpstreamOpener { java.net.DatagramSocket() }
+        )
+        try {
+            val port = server.start()
+            Socket("127.0.0.1", port).use { control ->
+                control.soTimeout = 3_000
+                val input = control.getInputStream()
+                val output = control.getOutputStream()
+                output.write(byteArrayOf(5, 1, 2)); output.flush()
+                assertEquals(5, input.read()); assertEquals(2, input.read())
+                output.write(byteArrayOf(1, 4) + "user".toByteArray() + byteArrayOf(4) + "pass".toByteArray())
+                output.flush()
+                assertEquals(1, input.read()); assertEquals(0, input.read())
+                output.write(byteArrayOf(5, 3, 0, 1, 0, 0, 0, 0, 0, 0)); output.flush()
+                val reply = ByteArray(10)
+                var offset = 0
+                while (offset < reply.size) {
+                    val count = input.read(reply, offset, reply.size - offset)
+                    check(count > 0); offset += count
+                }
+                assertEquals(5, reply[0].toInt()); assertEquals(0, reply[1].toInt())
+                assertEquals(127, reply[4].toInt() and 0xff)
+                val relayPort = ((reply[8].toInt() and 0xff) shl 8) or (reply[9].toInt() and 0xff)
+                java.net.DatagramSocket().use { udpClient ->
+                    udpClient.soTimeout = 3_000
+                    val target = InetSocketAddress(InetAddress.getByName("127.0.0.1"), echo.localPort)
+                    val encoded = Socks5UdpPacket.encode(target, "netswap-udp".toByteArray())!!
+                    udpClient.send(java.net.DatagramPacket(encoded, encoded.size,
+                        InetSocketAddress(InetAddress.getByName("127.0.0.1"), relayPort)))
+                    val response = java.net.DatagramPacket(ByteArray(512), 512)
+                    udpClient.receive(response)
+                    val decoded = Socks5UdpPacket.decode(response.data.copyOf(response.length))
+                    assertEquals(target, decoded!!.destination)
+                    assertEquals("netswap-udp", String(decoded.payload))
+                }
+            }
+        } finally {
+            server.close()
+            echo.close()
+            echoThread.join(1_000)
+        }
+    }
+
 }
