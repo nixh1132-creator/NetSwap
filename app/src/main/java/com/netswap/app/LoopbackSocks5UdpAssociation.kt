@@ -22,7 +22,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class LoopbackSocks5UdpAssociation(
     private val upstream: UdpUpstreamOpener,
-    private val maxDatagramBytes: Int = 65_507
+    private val maxDatagramBytes: Int = 65_507,
+    private val quota: SessionTrafficQuota? = null,
+    private val onQuotaExhausted: () -> Unit = {}
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val started = AtomicBoolean(false)
@@ -96,8 +98,11 @@ class LoopbackSocks5UdpAssociation(
                 val encoded = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
                 val decoded = Socks5UdpPacket.decode(encoded) ?: continue
                 if (decoded.payload.size > maxDatagramBytes - 22) continue
+                val allowed = quota?.record(TrafficDirection.RECEIVED_FROM_RECEIVER, decoded.payload.size.toLong()) ?: true
+                if (!allowed) { stopForQuota(); break }
                 val outbound = DatagramPacket(decoded.payload, decoded.payload.size, decoded.destination)
                 upstreamUdp.send(outbound)
+                if (quota?.snapshot()?.active == false) { stopForQuota(); break }
             } catch (_: java.net.SocketTimeoutException) {
                 continue
             } catch (_: SocketException) {
@@ -116,11 +121,13 @@ class LoopbackSocks5UdpAssociation(
                 upstreamUdp.receive(packet)
                 val pinned = clientEndpoint ?: continue
                 val source = packet.socketAddress as? InetSocketAddress ?: continue
-                val encoded = Socks5UdpPacket.encode(
-                    source, packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
-                ) ?: continue
+                val payload = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
+                val allowed = quota?.record(TrafficDirection.SENT_TO_RECEIVER, payload.size.toLong()) ?: true
+                if (!allowed) { stopForQuota(); break }
+                val encoded = Socks5UdpPacket.encode(source, payload) ?: continue
                 if (encoded.size > maxDatagramBytes) continue
                 local.send(DatagramPacket(encoded, encoded.size, pinned))
+                if (quota?.snapshot()?.active == false) { stopForQuota(); break }
             } catch (_: java.net.SocketTimeoutException) {
                 continue
             } catch (_: SocketException) {
@@ -129,6 +136,11 @@ class LoopbackSocks5UdpAssociation(
                 // Drop an individual response; keep association alive.
             }
         }
+    }
+
+    private fun stopForQuota() {
+        close()
+        try { onQuotaExhausted() } catch (_: Exception) { }
     }
 
     override fun close() {
