@@ -89,7 +89,7 @@ object NetSwapApi {
     }
 
     fun tunnelSessionConfig(session: AuthSession, requestId: String, localPublicKey: String): TunnelSessionConfig {
-        val filter = "/rest/v1/tunnel_sessions?select=id,sender_id,receiver_id,sender_public_key,receiver_public_key,sender_tunnel_ip,receiver_tunnel_ip,gateway_endpoint,status,quota_bytes&sharing_request_id=eq.${enc(requestId)}"
+        val filter = "/rest/v1/tunnel_sessions?select=id,sender_id,receiver_id,sender_public_key,receiver_public_key,sender_tunnel_ip,receiver_tunnel_ip,gateway_endpoint,gateway_public_key,status,quota_bytes&sharing_request_id=eq.${enc(requestId)}"
         val rows = JSONArray(call(filter, "GET", session.accessToken))
         require(rows.length() == 1) { "Secure tunnel session has not been created yet." }
         return TunnelSessionConfig.fromJson(rows.getJSONObject(0), session.userId, localPublicKey)
