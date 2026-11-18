@@ -5,7 +5,6 @@ import java.io.EOFException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.Inet4Address
-import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -96,7 +95,11 @@ class LoopbackSocks5TcpServer(
             val output = downstream.getOutputStream()
             if (!authenticate(input, output)) return
 
-            val request = readRequest(input) ?: return
+            val request = try { readRequest(input) } catch (_: Exception) { null }
+            if (request == null) {
+                reply(output, 0x08)
+                return
+            }
             val (destination, port) = request
             val remote = try {
                 upstream.openTcp(InetSocketAddress(destination, port), 10_000)
@@ -152,15 +155,14 @@ class LoopbackSocks5TcpServer(
         val address = when (addressType) {
             1 -> InetAddress.getByAddress(readExact(input, 4))
             4 -> InetAddress.getByAddress(readExact(input, 16))
-            else -> {
-                if (addressType == 3) {
-                    val length = input.read()
-                    if (length > 0) readExact(input, length)
-                }
-                val portBytes = readExact(input, 2)
-                replyRawFailurePlaceholder()
+            3 -> {
+                val length = input.read()
+                if (length !in 1..255) return null
+                readExact(input, length) // consume but deliberately reject domains (no DNS leakage)
+                readExact(input, 2) // consume destination port
                 return null
             }
+            else -> return null
         }
         val portBytes = readExact(input, 2)
         val port = ((portBytes[0].toInt() and 0xff) shl 8) or (portBytes[1].toInt() and 0xff)
@@ -169,8 +171,6 @@ class LoopbackSocks5TcpServer(
         }
         return address to port
     }
-
-    private fun replyRawFailurePlaceholder() = Unit
 
     private fun readExact(input: InputStream, length: Int): ByteArray {
         val bytes = ByteArray(length)
