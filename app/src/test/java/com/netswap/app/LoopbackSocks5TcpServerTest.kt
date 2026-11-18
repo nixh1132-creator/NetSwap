@@ -28,6 +28,25 @@ class LoopbackSocks5TcpServerTest {
     }
 
     @Test
+    fun explicitBindAddressIsHonored() {
+        val bind = InetAddress.getByName("127.0.0.2")
+        val server = LoopbackSocks5TcpServer(
+            TcpUpstreamOpener { _, _ -> error("No upstream expected") },
+            "user", "pass",
+            bindAddress = bind
+        )
+        try {
+            val port = server.start()
+            Socket().use { client ->
+                client.connect(InetSocketAddress(bind, port), 2_000)
+                assertTrue(client.isConnected)
+            }
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
     fun rejectsWrongPassword() {
         val server = LoopbackSocks5TcpServer(
             TcpUpstreamOpener { _, _ -> error("No upstream expected") },
