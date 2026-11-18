@@ -5,6 +5,43 @@
 #include <new>
 #include <cstring>
 
+#include <sys/socket.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <cerrno>
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_netswap_app_HevPacketSocketPair_nativeCreateDatagramPair(JNIEnv* env, jobject) {
+    int fds[2] = {-1, -1};
+#ifdef SOCK_CLOEXEC
+    if (socketpair(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0, fds) != 0)
+#endif
+    {
+        // Portable fallback for Android API levels where SOCK_CLOEXEC is unavailable.
+        if (fds[0] >= 0) { close(fds[0]); fds[0] = -1; }
+        if (fds[1] >= 0) { close(fds[1]); fds[1] = -1; }
+        if (socketpair(AF_UNIX, SOCK_DGRAM, 0, fds) != 0) {
+            throwState(env, "Unable to create packet-preserving Unix datagram socket pair");
+            return nullptr;
+        }
+        for (int fd : fds) {
+            int flags = fcntl(fd, F_GETFD);
+            if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0) {
+                close(fds[0]); close(fds[1]);
+                throwState(env, "Unable to mark packet socket descriptors close-on-exec");
+                return nullptr;
+            }
+        }
+    }
+    jint values[2] = {fds[0], fds[1]};
+    jintArray result = env->NewIntArray(2);
+    if (!result) { close(fds[0]); close(fds[1]); return nullptr; }
+    env->SetIntArrayRegion(result, 0, 2, values);
+    if (env->ExceptionCheck()) { close(fds[0]); close(fds[1]); return nullptr; }
+    return result;
+}
+
+
 extern "C" {
 void* netswap_tunnel_new(const uint8_t*, const uint8_t*, uint16_t, uint32_t);
 void netswap_tunnel_free(void*);
