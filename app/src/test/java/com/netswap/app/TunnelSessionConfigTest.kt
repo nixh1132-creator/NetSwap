@@ -27,6 +27,7 @@ class TunnelSessionConfigTest {
         assertEquals("gateway-public", config.remotePublicKey)
         assertEquals("198.51.100.10", config.endpoint.hostString)
         assertEquals(51820, config.endpoint.port)
+        assertEquals(false, config.endpoint.isUnresolved)
         assertEquals(104857600L, config.quotaBytes)
         assertEquals(true, config.isSender)
     }
