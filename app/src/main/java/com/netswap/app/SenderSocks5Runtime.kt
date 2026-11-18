@@ -1,6 +1,7 @@
 package com.netswap.app
 
 import java.io.Closeable
+import java.net.InetAddress
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -14,7 +15,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class SenderSocks5Runtime(
     upstream: ProtectedUpstreamSockets,
-    quota: SessionTrafficQuota? = null
+    quota: SessionTrafficQuota? = null,
+    bindAddress: InetAddress = InetAddress.getByName("127.0.0.1")
 ) : Closeable {
     data class Info(
         val host: String,
@@ -33,7 +35,8 @@ class SenderSocks5Runtime(
         password = password,
         maxClients = 8,
         udpUpstream = upstream,
-        quota = quota
+        quota = quota,
+        bindAddress = bindAddress
     )
     @Volatile private var boundPort: Int? = null
 
@@ -52,7 +55,7 @@ class SenderSocks5Runtime(
 
     fun info(): Info {
         check(started.get() && !closed.get()) { "Sender SOCKS runtime is not running." }
-        return Info("127.0.0.1", checkNotNull(boundPort), username, password)
+        return Info(bindAddress.hostAddress ?: "127.0.0.1", checkNotNull(boundPort), username, password)
     }
 
     override fun close() {
