@@ -46,6 +46,8 @@ private val White = Color(0xFFFFFFFF)
 
 class MainActivity : ComponentActivity() {
     private val vpnState = mutableStateOf(false)
+    private val peerConnectionStatus = mutableStateOf("Not connected")
+    private var peerSessionController: WebRtcSessionController? = null
     private val vpnStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
@@ -125,6 +127,1205 @@ class MainActivity : ComponentActivity() {
         pendingTunnelPublicKey = null
         if (result.resultCode == RESULT_OK && id != null && key != null) launchUserspaceVpn(id, key)
         else Toast.makeText(this, "VPN permission is required.", Toast.LENGTH_LONG).show()
+    }
+
+    private fun startPeerConnection(request: ShareRequest, session: AuthSession) {
+        runCatching { peerSessionController?.close() }
+        peerConnectionStatus.value = "Starting peer connection…"
+        peerSessionController = WebRtcSessionController(
+            this, session, request,
+            onState = { state -> runOnUiThread { peerConnectionStatus.value = state.name } },
+            onMessage = { bytes -> runOnUiThread { peerConnectionStatus.value = "Data channel received ${'        val intent = Intent(this, NetSwapUserspaceVpnService::class.java)
+            .setAction(NetSwapUserspaceVpnService.ACTION_START)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_REQUEST_ID, id)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_LOCAL_PUBLIC_KEY, key)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+    }
+
+    private fun requestUserspaceTunnel(request: ShareRequest) {
+        lifecycleScope.launch {
+            try {
+                val key = withContext(Dispatchers.IO) {
+                    val publicKey = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id).first
+                    NetSwapApi.registerTunnelPublicKey(
+                        AuthSession(
+                            prefs.getString("access_token", "") ?: "",
+                            prefs.getString("refresh_token", "") ?: "",
+                            prefs.getString("user_id", "") ?: "",
+                            prefs.getString("email", "") ?: ""
+                        ),
+                        request.id,
+                        publicKey
+                    )
+                    publicKey
+                }
+                pendingTunnelRequestId = request.id
+                pendingTunnelPublicKey = key
+                val prepare = VpnService.prepare(this@MainActivity)
+                if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
+                else {
+                    pendingTunnelRequestId = null
+                    pendingTunnelPublicKey = null
+                    launchUserspaceVpn(request.id, key)
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, e.message ?: "Could not start secure tunnel.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun requestVpnSetup() {
+        val prepareIntent = VpnService.prepare(this)
+        if (prepareIntent != null) vpnPermissionLauncher.launch(prepareIntent)
+        else startVpnService()
+    }
+
+    private val prefs by lazy { getSharedPreferences("netswap_session", MODE_PRIVATE) }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val stateFilter = IntentFilter().apply {
+            addAction(NetSwapVpnService.ACTION_STATE)
+            addAction(NetSwapUserspaceVpnService.ACTION_STATE)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(vpnStateReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(vpnStateReceiver, stateFilter)
+        }
+        vpnState.value = NetSwapVpnService.isTunnelActive
+        val initial = runCatching {
+            val refresh = prefs.getString("refresh_token", null) ?: return@runCatching null
+            val token = prefs.getString("access_token", null) ?: ""
+            val id = prefs.getString("user_id", null) ?: return@runCatching null
+            AuthSession(token, refresh, id, prefs.getString("email", "") ?: "")
+        }.getOrNull()
+
+        setContent {
+            MaterialTheme(colorScheme = lightColorScheme(background = Cream, surface = White, primary = Color(0xFF8274B8), onBackground = Ink, onSurface = Ink)) {
+                var session by remember { mutableStateOf(initial) }
+                var uid by remember { mutableStateOf("") }
+                var requests by remember { mutableStateOf(emptyList<ShareRequest>()) }
+                var loading by remember { mutableStateOf(false) }
+                var message by remember { mutableStateOf("") }
+                var vpnActive by vpnState
+
+                fun saveSession(s: AuthSession) {
+                    prefs.edit().putString("access_token", s.accessToken).putString("refresh_token", s.refreshToken)
+                        .putString("user_id", s.userId).putString("email", s.email).apply()
+                    session = s
+                }
+                fun loadHome(s: AuthSession, clearMessage: Boolean = true) {
+                    lifecycleScope.launch {
+                        loading = true
+                        if (clearMessage) message = ""
+                        try {
+                            val data = withContext(Dispatchers.IO) {
+                                val refreshed = if (s.accessToken.isBlank()) NetSwapApi.refresh(s.refreshToken) else s
+                                Pair(refreshed, Pair(NetSwapApi.profileUid(refreshed), NetSwapApi.requests(refreshed)))
+                            }
+                            saveSession(data.first); uid = data.second.first; requests = data.second.second
+                        } catch (e: Exception) { message = e.message ?: "Could not load account data." }
+                        loading = false
+                    }
+                }
+
+                LaunchedEffect(session?.userId) { session?.let { loadHome(it) } }
+
+                if (session == null) {
+                    AuthScreen(loading, message,
+                        onLogin = { email, password ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try { saveSession(withContext(Dispatchers.IO) { NetSwapApi.signIn(email, password) }) }
+                                catch (e: Exception) { message = e.message ?: "Login failed." }
+                                loading = false
+                            }
+                        },
+                        onSignUp = { email, password ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try {
+                                    val result = withContext(Dispatchers.IO) { NetSwapApi.signUp(email, password) }
+                                    if (result.optString("access_token").isNotBlank() && result.optJSONObject("user") != null) {
+                                        val u = result.getJSONObject("user")
+                                        saveSession(AuthSession(result.getString("access_token"), result.optString("refresh_token"), u.getString("id"), u.optString("email", email)))
+                                    } else message = "Account created. Email verification may be required. Verify it, then log in."
+                                } catch (e: Exception) { message = e.message ?: "Sign up failed." }
+                                loading = false
+                            }
+                        })
+                } else {
+                    HomeScreen(session!!, uid, requests, loading, message,
+                        onRefresh = { loadHome(session!!) },
+                        vpnActive = vpnActive,
+                        peerConnectionStatus = peerConnectionStatus.value,
+                        onVpnSetup = { startVpnWithNotificationPermission() },
+                        onVpnDisconnect = { disconnectVpnService(); vpnActive = false },
+                        onSend = { friendUid, quota ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        val friend = NetSwapApi.lookupUid(session!!, friendUid)
+                                            ?: throw IllegalArgumentException("No NetSwap user found with that UID.")
+                                        NetSwapApi.sendRequest(session!!, friend.userId, quota)
+                                    }
+                                    message = "Sharing request sent. Your friend must accept it."
+                                    loadHome(session!!)
+                                } catch (e: Exception) { message = e.message ?: "Could not send request."; loading = false }
+                            }
+                        },
+                        onRespond = { request, status ->
+                            lifecycleScope.launch {
+                                loading = true
+                                try { withContext(Dispatchers.IO) { NetSwapApi.respond(session!!, request.id, status) }; loadHome(session!!) }
+                                catch (e: Exception) { message = e.message ?: "Could not update request."; loading = false }
+                            }
+                        },
+                        onStartTunnel = { request -> requestUserspaceTunnel(request) },
+                        onStartPeer = { request -> startPeerConnection(request, session!!) },
+                        onPrepareTunnel = { request ->
+                            lifecycleScope.launch {
+                                loading = true
+                                message = "Preparing this phone's secure key…"
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        val keys = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id)
+                                        NetSwapApi.registerTunnelPublicKey(session!!, request.id, keys.first)
+                                    }
+                                    val both = result.optBoolean("sender_key_registered") && result.optBoolean("receiver_key_registered")
+                                    message = if (both) {
+                                        "This phone's key is registered. Both phones have keys; network gateway setup is still pending."
+                                    } else {
+                                        "This phone's public key is registered. Your friend must prepare their phone too."
+                                    }
+                                    loadHome(session!!, clearMessage = false)
+                                } catch (e: Exception) {
+                                    message = e.message ?: "Could not prepare the secure key."
+                                    loading = false
+                                }
+                            }
+                        },
+                        onLogout = { prefs.edit().clear().apply(); session = null; uid = ""; requests = emptyList(); message = "" }
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching { peerSessionController?.close(); peerSessionController = null }
+        runCatching { unregisterReceiver(vpnStateReceiver) }
+        super.onDestroy()
+    }
+}
+
+@Composable
+private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,String)->Unit, onSignUp: (String,String)->Unit) {
+    var signup by remember { mutableStateOf(false) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    Surface(Modifier.fillMaxSize(), color = Cream) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+            Text("NetSwap", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text("Share a little. Stay connected.", color = Muted)
+            Spacer(Modifier.height(26.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(26.dp)).padding(20.dp)) {
+                Text(if (signup) "Create your account" else "Welcome back", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                if (message.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(message, color = Color(0xFF8B5A36), fontSize = 13.sp) }
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { if (signup) onSignUp(email.trim(), password) else onLogin(email.trim(), password) }, enabled = !loading && email.contains("@") && password.length >= 6, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) {
+                    Text(if (loading) "Please wait…" else if (signup) "Create account" else "Log in")
+                }
+                TextButton(onClick = { signup = !signup }) { Text(if (signup) "Already registered? Log in" else "New here? Create account") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
+    vpnActive: Boolean, peerConnectionStatus: String, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
+    onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
+    onPrepareTunnel: (ShareRequest)->Unit, onStartTunnel: (ShareRequest)->Unit, onStartPeer: (ShareRequest)->Unit, onLogout: ()->Unit) {
+    var friendUid by remember { mutableStateOf("") }
+    var quota by remember { mutableStateOf(500L * 1024 * 1024) }
+    var showSend by remember { mutableStateOf(false) }
+    Surface(Modifier.fillMaxSize(), color = Cream) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 22.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Column { Text("NetSwap", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink); Text("Share a little. Stay connected.", fontSize = 13.sp, color = Muted) }
+                Box(Modifier.background(Lavender, CircleShape).padding(horizontal = 13.dp, vertical = 8.dp)) { Text("BETA", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF65568F)) }
+            }
+            Spacer(Modifier.height(18.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(24.dp)).padding(18.dp)) {
+                Text("Your NetSwap ID", color = Muted, fontSize = 13.sp)
+                Spacer(Modifier.height(6.dp))
+                Text(if (uid.isBlank()) "Loading your ID…" else uid, color = Ink, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text(session.email, color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.height(12.dp))
+                Text("Account connected • Sharing is not active yet", color = Color(0xFF3E725B), fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { showSend = !showSend }, modifier = Modifier.weight(1f)) { Text("Send data request") }
+                OutlinedButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
+            }
+            if (vpnActive) {
+                OutlinedButton(onClick = onVpnDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect VPN") }
+                Text("Test VPN route connected • Internet sharing is not active yet.", color = Muted, fontSize = 11.sp)
+            } else {
+                OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Connect WireGuard VPN") }
+                Text("Import a trusted WireGuard .conf file to connect. NetSwap friend-to-friend sharing is still under development.", color = Muted, fontSize = 11.sp)
+            }
+            if (showSend) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
+                    Text("Friend's NetSwap UID", fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(friendUid, { friendUid = it.uppercase() }, placeholder = { Text("NS-XXXXXXXXXX") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Text("Data quota")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(100L to "100 MB", 500L to "500 MB", 1024L to "1 GB").forEach { (mb,label) ->
+                            FilterChip(selected = quota == mb*1024*1024, onClick = { quota = mb*1024*1024 }, label = { Text(label) })
+                        }
+                    }
+                    Button(onClick = { onSend(friendUid, quota); showSend = false }, enabled = !loading && friendUid.startsWith("NS-") && friendUid.length >= 8, modifier = Modifier.fillMaxWidth()) { Text("Send request") }
+                }
+            }
+            if (message.isNotBlank()) { Text(message, color = Color(0xFF8B5A36), fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp)) }
+            Text("Sharing requests", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = Ink, modifier = Modifier.padding(vertical = 8.dp))
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(requests, key = { it.id }) { r ->
+                    val incoming = r.receiverId == session.userId
+                    Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
+                        Text(if (incoming) "Incoming request" else "You sent a request", fontWeight = FontWeight.SemiBold, color = Ink)
+                        Text("${r.quotaBytes / (1024*1024)} MB • ${r.status.uppercase()}", color = Muted, fontSize = 12.sp)
+                        if (incoming && r.status == "pending") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { onRespond(r, "approved") }, modifier = Modifier.weight(1f)) { Text("Accept") }
+                                OutlinedButton(onClick = { onRespond(r, "rejected") }, modifier = Modifier.weight(1f)) { Text("Decline") }
+                            }
+                        } else if (!incoming && r.status in listOf("pending","approved")) {
+                            TextButton(onClick = { onRespond(r, "cancelled") }) { Text("Cancel request") }
+                        }
+                        if (r.status == "approved") {
+                            OutlinedButton(
+                                onClick = { onPrepareTunnel(r) },
+                                enabled = !loading,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Prepare secure tunnel key") }
+                            Text("Creates a device-protected key and registers only its public part.", color = Muted, fontSize = 11.sp)
+                            OutlinedButton(onClick = { onStartPeer(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Connect peer-to-peer") }
+                            Text("Peer status: ${'                            OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start secure peer tunnel") }
+                        }
+                    }
+                }
+            }
+            TextButton(onClick = onLogout, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Log out") }
+        }
+    }
+}
+}{bytes.size} bytes" } },
+            onError = { error -> runOnUiThread { peerConnectionStatus.value = "Connection error: ${'        val intent = Intent(this, NetSwapUserspaceVpnService::class.java)
+            .setAction(NetSwapUserspaceVpnService.ACTION_START)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_REQUEST_ID, id)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_LOCAL_PUBLIC_KEY, key)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+    }
+
+    private fun requestUserspaceTunnel(request: ShareRequest) {
+        lifecycleScope.launch {
+            try {
+                val key = withContext(Dispatchers.IO) {
+                    val publicKey = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id).first
+                    NetSwapApi.registerTunnelPublicKey(
+                        AuthSession(
+                            prefs.getString("access_token", "") ?: "",
+                            prefs.getString("refresh_token", "") ?: "",
+                            prefs.getString("user_id", "") ?: "",
+                            prefs.getString("email", "") ?: ""
+                        ),
+                        request.id,
+                        publicKey
+                    )
+                    publicKey
+                }
+                pendingTunnelRequestId = request.id
+                pendingTunnelPublicKey = key
+                val prepare = VpnService.prepare(this@MainActivity)
+                if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
+                else {
+                    pendingTunnelRequestId = null
+                    pendingTunnelPublicKey = null
+                    launchUserspaceVpn(request.id, key)
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, e.message ?: "Could not start secure tunnel.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun requestVpnSetup() {
+        val prepareIntent = VpnService.prepare(this)
+        if (prepareIntent != null) vpnPermissionLauncher.launch(prepareIntent)
+        else startVpnService()
+    }
+
+    private val prefs by lazy { getSharedPreferences("netswap_session", MODE_PRIVATE) }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val stateFilter = IntentFilter().apply {
+            addAction(NetSwapVpnService.ACTION_STATE)
+            addAction(NetSwapUserspaceVpnService.ACTION_STATE)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(vpnStateReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(vpnStateReceiver, stateFilter)
+        }
+        vpnState.value = NetSwapVpnService.isTunnelActive
+        val initial = runCatching {
+            val refresh = prefs.getString("refresh_token", null) ?: return@runCatching null
+            val token = prefs.getString("access_token", null) ?: ""
+            val id = prefs.getString("user_id", null) ?: return@runCatching null
+            AuthSession(token, refresh, id, prefs.getString("email", "") ?: "")
+        }.getOrNull()
+
+        setContent {
+            MaterialTheme(colorScheme = lightColorScheme(background = Cream, surface = White, primary = Color(0xFF8274B8), onBackground = Ink, onSurface = Ink)) {
+                var session by remember { mutableStateOf(initial) }
+                var uid by remember { mutableStateOf("") }
+                var requests by remember { mutableStateOf(emptyList<ShareRequest>()) }
+                var loading by remember { mutableStateOf(false) }
+                var message by remember { mutableStateOf("") }
+                var vpnActive by vpnState
+
+                fun saveSession(s: AuthSession) {
+                    prefs.edit().putString("access_token", s.accessToken).putString("refresh_token", s.refreshToken)
+                        .putString("user_id", s.userId).putString("email", s.email).apply()
+                    session = s
+                }
+                fun loadHome(s: AuthSession, clearMessage: Boolean = true) {
+                    lifecycleScope.launch {
+                        loading = true
+                        if (clearMessage) message = ""
+                        try {
+                            val data = withContext(Dispatchers.IO) {
+                                val refreshed = if (s.accessToken.isBlank()) NetSwapApi.refresh(s.refreshToken) else s
+                                Pair(refreshed, Pair(NetSwapApi.profileUid(refreshed), NetSwapApi.requests(refreshed)))
+                            }
+                            saveSession(data.first); uid = data.second.first; requests = data.second.second
+                        } catch (e: Exception) { message = e.message ?: "Could not load account data." }
+                        loading = false
+                    }
+                }
+
+                LaunchedEffect(session?.userId) { session?.let { loadHome(it) } }
+
+                if (session == null) {
+                    AuthScreen(loading, message,
+                        onLogin = { email, password ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try { saveSession(withContext(Dispatchers.IO) { NetSwapApi.signIn(email, password) }) }
+                                catch (e: Exception) { message = e.message ?: "Login failed." }
+                                loading = false
+                            }
+                        },
+                        onSignUp = { email, password ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try {
+                                    val result = withContext(Dispatchers.IO) { NetSwapApi.signUp(email, password) }
+                                    if (result.optString("access_token").isNotBlank() && result.optJSONObject("user") != null) {
+                                        val u = result.getJSONObject("user")
+                                        saveSession(AuthSession(result.getString("access_token"), result.optString("refresh_token"), u.getString("id"), u.optString("email", email)))
+                                    } else message = "Account created. Email verification may be required. Verify it, then log in."
+                                } catch (e: Exception) { message = e.message ?: "Sign up failed." }
+                                loading = false
+                            }
+                        })
+                } else {
+                    HomeScreen(session!!, uid, requests, loading, message,
+                        onRefresh = { loadHome(session!!) },
+                        vpnActive = vpnActive,
+                        onVpnSetup = { startVpnWithNotificationPermission() },
+                        onVpnDisconnect = { disconnectVpnService(); vpnActive = false },
+                        onSend = { friendUid, quota ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        val friend = NetSwapApi.lookupUid(session!!, friendUid)
+                                            ?: throw IllegalArgumentException("No NetSwap user found with that UID.")
+                                        NetSwapApi.sendRequest(session!!, friend.userId, quota)
+                                    }
+                                    message = "Sharing request sent. Your friend must accept it."
+                                    loadHome(session!!)
+                                } catch (e: Exception) { message = e.message ?: "Could not send request."; loading = false }
+                            }
+                        },
+                        onRespond = { request, status ->
+                            lifecycleScope.launch {
+                                loading = true
+                                try { withContext(Dispatchers.IO) { NetSwapApi.respond(session!!, request.id, status) }; loadHome(session!!) }
+                                catch (e: Exception) { message = e.message ?: "Could not update request."; loading = false }
+                            }
+                        },
+                        onStartTunnel = { request -> requestUserspaceTunnel(request) },
+                        onPrepareTunnel = { request ->
+                            lifecycleScope.launch {
+                                loading = true
+                                message = "Preparing this phone's secure key…"
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        val keys = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id)
+                                        NetSwapApi.registerTunnelPublicKey(session!!, request.id, keys.first)
+                                    }
+                                    val both = result.optBoolean("sender_key_registered") && result.optBoolean("receiver_key_registered")
+                                    message = if (both) {
+                                        "This phone's key is registered. Both phones have keys; network gateway setup is still pending."
+                                    } else {
+                                        "This phone's public key is registered. Your friend must prepare their phone too."
+                                    }
+                                    loadHome(session!!, clearMessage = false)
+                                } catch (e: Exception) {
+                                    message = e.message ?: "Could not prepare the secure key."
+                                    loading = false
+                                }
+                            }
+                        },
+                        onLogout = { prefs.edit().clear().apply(); session = null; uid = ""; requests = emptyList(); message = "" }
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(vpnStateReceiver) }
+        super.onDestroy()
+    }
+}
+
+@Composable
+private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,String)->Unit, onSignUp: (String,String)->Unit) {
+    var signup by remember { mutableStateOf(false) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    Surface(Modifier.fillMaxSize(), color = Cream) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+            Text("NetSwap", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text("Share a little. Stay connected.", color = Muted)
+            Spacer(Modifier.height(26.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(26.dp)).padding(20.dp)) {
+                Text(if (signup) "Create your account" else "Welcome back", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                if (message.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(message, color = Color(0xFF8B5A36), fontSize = 13.sp) }
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { if (signup) onSignUp(email.trim(), password) else onLogin(email.trim(), password) }, enabled = !loading && email.contains("@") && password.length >= 6, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) {
+                    Text(if (loading) "Please wait…" else if (signup) "Create account" else "Log in")
+                }
+                TextButton(onClick = { signup = !signup }) { Text(if (signup) "Already registered? Log in" else "New here? Create account") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
+    vpnActive: Boolean, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
+    onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
+    onPrepareTunnel: (ShareRequest)->Unit, onStartTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
+    var friendUid by remember { mutableStateOf("") }
+    var quota by remember { mutableStateOf(500L * 1024 * 1024) }
+    var showSend by remember { mutableStateOf(false) }
+    Surface(Modifier.fillMaxSize(), color = Cream) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 22.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Column { Text("NetSwap", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink); Text("Share a little. Stay connected.", fontSize = 13.sp, color = Muted) }
+                Box(Modifier.background(Lavender, CircleShape).padding(horizontal = 13.dp, vertical = 8.dp)) { Text("BETA", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF65568F)) }
+            }
+            Spacer(Modifier.height(18.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(24.dp)).padding(18.dp)) {
+                Text("Your NetSwap ID", color = Muted, fontSize = 13.sp)
+                Spacer(Modifier.height(6.dp))
+                Text(if (uid.isBlank()) "Loading your ID…" else uid, color = Ink, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text(session.email, color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.height(12.dp))
+                Text("Account connected • Sharing is not active yet", color = Color(0xFF3E725B), fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { showSend = !showSend }, modifier = Modifier.weight(1f)) { Text("Send data request") }
+                OutlinedButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
+            }
+            if (vpnActive) {
+                OutlinedButton(onClick = onVpnDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect VPN") }
+                Text("Test VPN route connected • Internet sharing is not active yet.", color = Muted, fontSize = 11.sp)
+            } else {
+                OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Connect WireGuard VPN") }
+                Text("Import a trusted WireGuard .conf file to connect. NetSwap friend-to-friend sharing is still under development.", color = Muted, fontSize = 11.sp)
+            }
+            if (showSend) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
+                    Text("Friend's NetSwap UID", fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(friendUid, { friendUid = it.uppercase() }, placeholder = { Text("NS-XXXXXXXXXX") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Text("Data quota")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(100L to "100 MB", 500L to "500 MB", 1024L to "1 GB").forEach { (mb,label) ->
+                            FilterChip(selected = quota == mb*1024*1024, onClick = { quota = mb*1024*1024 }, label = { Text(label) })
+                        }
+                    }
+                    Button(onClick = { onSend(friendUid, quota); showSend = false }, enabled = !loading && friendUid.startsWith("NS-") && friendUid.length >= 8, modifier = Modifier.fillMaxWidth()) { Text("Send request") }
+                }
+            }
+            if (message.isNotBlank()) { Text(message, color = Color(0xFF8B5A36), fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp)) }
+            Text("Sharing requests", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = Ink, modifier = Modifier.padding(vertical = 8.dp))
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(requests, key = { it.id }) { r ->
+                    val incoming = r.receiverId == session.userId
+                    Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
+                        Text(if (incoming) "Incoming request" else "You sent a request", fontWeight = FontWeight.SemiBold, color = Ink)
+                        Text("${r.quotaBytes / (1024*1024)} MB • ${r.status.uppercase()}", color = Muted, fontSize = 12.sp)
+                        if (incoming && r.status == "pending") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { onRespond(r, "approved") }, modifier = Modifier.weight(1f)) { Text("Accept") }
+                                OutlinedButton(onClick = { onRespond(r, "rejected") }, modifier = Modifier.weight(1f)) { Text("Decline") }
+                            }
+                        } else if (!incoming && r.status in listOf("pending","approved")) {
+                            TextButton(onClick = { onRespond(r, "cancelled") }) { Text("Cancel request") }
+                        }
+                        if (r.status == "approved") {
+                            OutlinedButton(
+                                onClick = { onPrepareTunnel(r) },
+                                enabled = !loading,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Prepare secure tunnel key") }
+                            Text("Creates a device-protected key and registers only its public part.", color = Muted, fontSize = 11.sp)
+                            OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start secure peer tunnel") }
+                        }
+                    }
+                }
+            }
+            TextButton(onClick = onLogout, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Log out") }
+        }
+    }
+}
+}error" } }
+        ).also { it.start() }
+    }
+
+    private fun launchUserspaceVpn(id: String, key: String) {
+        val intent = Intent(this, NetSwapUserspaceVpnService::class.java)
+            .setAction(NetSwapUserspaceVpnService.ACTION_START)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_REQUEST_ID, id)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_LOCAL_PUBLIC_KEY, key)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+    }
+
+    private fun requestUserspaceTunnel(request: ShareRequest) {
+        lifecycleScope.launch {
+            try {
+                val key = withContext(Dispatchers.IO) {
+                    val publicKey = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id).first
+                    NetSwapApi.registerTunnelPublicKey(
+                        AuthSession(
+                            prefs.getString("access_token", "") ?: "",
+                            prefs.getString("refresh_token", "") ?: "",
+                            prefs.getString("user_id", "") ?: "",
+                            prefs.getString("email", "") ?: ""
+                        ),
+                        request.id,
+                        publicKey
+                    )
+                    publicKey
+                }
+                pendingTunnelRequestId = request.id
+                pendingTunnelPublicKey = key
+                val prepare = VpnService.prepare(this@MainActivity)
+                if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
+                else {
+                    pendingTunnelRequestId = null
+                    pendingTunnelPublicKey = null
+                    launchUserspaceVpn(request.id, key)
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, e.message ?: "Could not start secure tunnel.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun requestVpnSetup() {
+        val prepareIntent = VpnService.prepare(this)
+        if (prepareIntent != null) vpnPermissionLauncher.launch(prepareIntent)
+        else startVpnService()
+    }
+
+    private val prefs by lazy { getSharedPreferences("netswap_session", MODE_PRIVATE) }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val stateFilter = IntentFilter().apply {
+            addAction(NetSwapVpnService.ACTION_STATE)
+            addAction(NetSwapUserspaceVpnService.ACTION_STATE)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(vpnStateReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(vpnStateReceiver, stateFilter)
+        }
+        vpnState.value = NetSwapVpnService.isTunnelActive
+        val initial = runCatching {
+            val refresh = prefs.getString("refresh_token", null) ?: return@runCatching null
+            val token = prefs.getString("access_token", null) ?: ""
+            val id = prefs.getString("user_id", null) ?: return@runCatching null
+            AuthSession(token, refresh, id, prefs.getString("email", "") ?: "")
+        }.getOrNull()
+
+        setContent {
+            MaterialTheme(colorScheme = lightColorScheme(background = Cream, surface = White, primary = Color(0xFF8274B8), onBackground = Ink, onSurface = Ink)) {
+                var session by remember { mutableStateOf(initial) }
+                var uid by remember { mutableStateOf("") }
+                var requests by remember { mutableStateOf(emptyList<ShareRequest>()) }
+                var loading by remember { mutableStateOf(false) }
+                var message by remember { mutableStateOf("") }
+                var vpnActive by vpnState
+
+                fun saveSession(s: AuthSession) {
+                    prefs.edit().putString("access_token", s.accessToken).putString("refresh_token", s.refreshToken)
+                        .putString("user_id", s.userId).putString("email", s.email).apply()
+                    session = s
+                }
+                fun loadHome(s: AuthSession, clearMessage: Boolean = true) {
+                    lifecycleScope.launch {
+                        loading = true
+                        if (clearMessage) message = ""
+                        try {
+                            val data = withContext(Dispatchers.IO) {
+                                val refreshed = if (s.accessToken.isBlank()) NetSwapApi.refresh(s.refreshToken) else s
+                                Pair(refreshed, Pair(NetSwapApi.profileUid(refreshed), NetSwapApi.requests(refreshed)))
+                            }
+                            saveSession(data.first); uid = data.second.first; requests = data.second.second
+                        } catch (e: Exception) { message = e.message ?: "Could not load account data." }
+                        loading = false
+                    }
+                }
+
+                LaunchedEffect(session?.userId) { session?.let { loadHome(it) } }
+
+                if (session == null) {
+                    AuthScreen(loading, message,
+                        onLogin = { email, password ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try { saveSession(withContext(Dispatchers.IO) { NetSwapApi.signIn(email, password) }) }
+                                catch (e: Exception) { message = e.message ?: "Login failed." }
+                                loading = false
+                            }
+                        },
+                        onSignUp = { email, password ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try {
+                                    val result = withContext(Dispatchers.IO) { NetSwapApi.signUp(email, password) }
+                                    if (result.optString("access_token").isNotBlank() && result.optJSONObject("user") != null) {
+                                        val u = result.getJSONObject("user")
+                                        saveSession(AuthSession(result.getString("access_token"), result.optString("refresh_token"), u.getString("id"), u.optString("email", email)))
+                                    } else message = "Account created. Email verification may be required. Verify it, then log in."
+                                } catch (e: Exception) { message = e.message ?: "Sign up failed." }
+                                loading = false
+                            }
+                        })
+                } else {
+                    HomeScreen(session!!, uid, requests, loading, message,
+                        onRefresh = { loadHome(session!!) },
+                        vpnActive = vpnActive,
+                        onVpnSetup = { startVpnWithNotificationPermission() },
+                        onVpnDisconnect = { disconnectVpnService(); vpnActive = false },
+                        onSend = { friendUid, quota ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        val friend = NetSwapApi.lookupUid(session!!, friendUid)
+                                            ?: throw IllegalArgumentException("No NetSwap user found with that UID.")
+                                        NetSwapApi.sendRequest(session!!, friend.userId, quota)
+                                    }
+                                    message = "Sharing request sent. Your friend must accept it."
+                                    loadHome(session!!)
+                                } catch (e: Exception) { message = e.message ?: "Could not send request."; loading = false }
+                            }
+                        },
+                        onRespond = { request, status ->
+                            lifecycleScope.launch {
+                                loading = true
+                                try { withContext(Dispatchers.IO) { NetSwapApi.respond(session!!, request.id, status) }; loadHome(session!!) }
+                                catch (e: Exception) { message = e.message ?: "Could not update request."; loading = false }
+                            }
+                        },
+                        onStartTunnel = { request -> requestUserspaceTunnel(request) },
+                        onPrepareTunnel = { request ->
+                            lifecycleScope.launch {
+                                loading = true
+                                message = "Preparing this phone's secure key…"
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        val keys = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id)
+                                        NetSwapApi.registerTunnelPublicKey(session!!, request.id, keys.first)
+                                    }
+                                    val both = result.optBoolean("sender_key_registered") && result.optBoolean("receiver_key_registered")
+                                    message = if (both) {
+                                        "This phone's key is registered. Both phones have keys; network gateway setup is still pending."
+                                    } else {
+                                        "This phone's public key is registered. Your friend must prepare their phone too."
+                                    }
+                                    loadHome(session!!, clearMessage = false)
+                                } catch (e: Exception) {
+                                    message = e.message ?: "Could not prepare the secure key."
+                                    loading = false
+                                }
+                            }
+                        },
+                        onLogout = { prefs.edit().clear().apply(); session = null; uid = ""; requests = emptyList(); message = "" }
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(vpnStateReceiver) }
+        super.onDestroy()
+    }
+}
+
+@Composable
+private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,String)->Unit, onSignUp: (String,String)->Unit) {
+    var signup by remember { mutableStateOf(false) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    Surface(Modifier.fillMaxSize(), color = Cream) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+            Text("NetSwap", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text("Share a little. Stay connected.", color = Muted)
+            Spacer(Modifier.height(26.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(26.dp)).padding(20.dp)) {
+                Text(if (signup) "Create your account" else "Welcome back", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                if (message.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(message, color = Color(0xFF8B5A36), fontSize = 13.sp) }
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { if (signup) onSignUp(email.trim(), password) else onLogin(email.trim(), password) }, enabled = !loading && email.contains("@") && password.length >= 6, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) {
+                    Text(if (loading) "Please wait…" else if (signup) "Create account" else "Log in")
+                }
+                TextButton(onClick = { signup = !signup }) { Text(if (signup) "Already registered? Log in" else "New here? Create account") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
+    vpnActive: Boolean, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
+    onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
+    onPrepareTunnel: (ShareRequest)->Unit, onStartTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
+    var friendUid by remember { mutableStateOf("") }
+    var quota by remember { mutableStateOf(500L * 1024 * 1024) }
+    var showSend by remember { mutableStateOf(false) }
+    Surface(Modifier.fillMaxSize(), color = Cream) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 22.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Column { Text("NetSwap", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink); Text("Share a little. Stay connected.", fontSize = 13.sp, color = Muted) }
+                Box(Modifier.background(Lavender, CircleShape).padding(horizontal = 13.dp, vertical = 8.dp)) { Text("BETA", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF65568F)) }
+            }
+            Spacer(Modifier.height(18.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(24.dp)).padding(18.dp)) {
+                Text("Your NetSwap ID", color = Muted, fontSize = 13.sp)
+                Spacer(Modifier.height(6.dp))
+                Text(if (uid.isBlank()) "Loading your ID…" else uid, color = Ink, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text(session.email, color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.height(12.dp))
+                Text("Account connected • Sharing is not active yet", color = Color(0xFF3E725B), fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { showSend = !showSend }, modifier = Modifier.weight(1f)) { Text("Send data request") }
+                OutlinedButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
+            }
+            if (vpnActive) {
+                OutlinedButton(onClick = onVpnDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect VPN") }
+                Text("Test VPN route connected • Internet sharing is not active yet.", color = Muted, fontSize = 11.sp)
+            } else {
+                OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Connect WireGuard VPN") }
+                Text("Import a trusted WireGuard .conf file to connect. NetSwap friend-to-friend sharing is still under development.", color = Muted, fontSize = 11.sp)
+            }
+            if (showSend) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
+                    Text("Friend's NetSwap UID", fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(friendUid, { friendUid = it.uppercase() }, placeholder = { Text("NS-XXXXXXXXXX") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Text("Data quota")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(100L to "100 MB", 500L to "500 MB", 1024L to "1 GB").forEach { (mb,label) ->
+                            FilterChip(selected = quota == mb*1024*1024, onClick = { quota = mb*1024*1024 }, label = { Text(label) })
+                        }
+                    }
+                    Button(onClick = { onSend(friendUid, quota); showSend = false }, enabled = !loading && friendUid.startsWith("NS-") && friendUid.length >= 8, modifier = Modifier.fillMaxWidth()) { Text("Send request") }
+                }
+            }
+            if (message.isNotBlank()) { Text(message, color = Color(0xFF8B5A36), fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp)) }
+            Text("Sharing requests", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = Ink, modifier = Modifier.padding(vertical = 8.dp))
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(requests, key = { it.id }) { r ->
+                    val incoming = r.receiverId == session.userId
+                    Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
+                        Text(if (incoming) "Incoming request" else "You sent a request", fontWeight = FontWeight.SemiBold, color = Ink)
+                        Text("${r.quotaBytes / (1024*1024)} MB • ${r.status.uppercase()}", color = Muted, fontSize = 12.sp)
+                        if (incoming && r.status == "pending") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { onRespond(r, "approved") }, modifier = Modifier.weight(1f)) { Text("Accept") }
+                                OutlinedButton(onClick = { onRespond(r, "rejected") }, modifier = Modifier.weight(1f)) { Text("Decline") }
+                            }
+                        } else if (!incoming && r.status in listOf("pending","approved")) {
+                            TextButton(onClick = { onRespond(r, "cancelled") }) { Text("Cancel request") }
+                        }
+                        if (r.status == "approved") {
+                            OutlinedButton(
+                                onClick = { onPrepareTunnel(r) },
+                                enabled = !loading,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Prepare secure tunnel key") }
+                            Text("Creates a device-protected key and registers only its public part.", color = Muted, fontSize = 11.sp)
+                            OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start secure peer tunnel") }
+                        }
+                    }
+                }
+            }
+            TextButton(onClick = onLogout, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Log out") }
+        }
+    }
+}
+}peerConnectionStatus", color = Muted, fontSize = 11.sp)
+                            OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start secure peer tunnel") }
+                        }
+                    }
+                }
+            }
+            TextButton(onClick = onLogout, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Log out") }
+        }
+    }
+}
+}{bytes.size} bytes" } },
+            onError = { error -> runOnUiThread { peerConnectionStatus.value = "Connection error: ${'        val intent = Intent(this, NetSwapUserspaceVpnService::class.java)
+            .setAction(NetSwapUserspaceVpnService.ACTION_START)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_REQUEST_ID, id)
+            .putExtra(NetSwapUserspaceVpnService.EXTRA_LOCAL_PUBLIC_KEY, key)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+    }
+
+    private fun requestUserspaceTunnel(request: ShareRequest) {
+        lifecycleScope.launch {
+            try {
+                val key = withContext(Dispatchers.IO) {
+                    val publicKey = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id).first
+                    NetSwapApi.registerTunnelPublicKey(
+                        AuthSession(
+                            prefs.getString("access_token", "") ?: "",
+                            prefs.getString("refresh_token", "") ?: "",
+                            prefs.getString("user_id", "") ?: "",
+                            prefs.getString("email", "") ?: ""
+                        ),
+                        request.id,
+                        publicKey
+                    )
+                    publicKey
+                }
+                pendingTunnelRequestId = request.id
+                pendingTunnelPublicKey = key
+                val prepare = VpnService.prepare(this@MainActivity)
+                if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
+                else {
+                    pendingTunnelRequestId = null
+                    pendingTunnelPublicKey = null
+                    launchUserspaceVpn(request.id, key)
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, e.message ?: "Could not start secure tunnel.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun requestVpnSetup() {
+        val prepareIntent = VpnService.prepare(this)
+        if (prepareIntent != null) vpnPermissionLauncher.launch(prepareIntent)
+        else startVpnService()
+    }
+
+    private val prefs by lazy { getSharedPreferences("netswap_session", MODE_PRIVATE) }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val stateFilter = IntentFilter().apply {
+            addAction(NetSwapVpnService.ACTION_STATE)
+            addAction(NetSwapUserspaceVpnService.ACTION_STATE)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(vpnStateReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(vpnStateReceiver, stateFilter)
+        }
+        vpnState.value = NetSwapVpnService.isTunnelActive
+        val initial = runCatching {
+            val refresh = prefs.getString("refresh_token", null) ?: return@runCatching null
+            val token = prefs.getString("access_token", null) ?: ""
+            val id = prefs.getString("user_id", null) ?: return@runCatching null
+            AuthSession(token, refresh, id, prefs.getString("email", "") ?: "")
+        }.getOrNull()
+
+        setContent {
+            MaterialTheme(colorScheme = lightColorScheme(background = Cream, surface = White, primary = Color(0xFF8274B8), onBackground = Ink, onSurface = Ink)) {
+                var session by remember { mutableStateOf(initial) }
+                var uid by remember { mutableStateOf("") }
+                var requests by remember { mutableStateOf(emptyList<ShareRequest>()) }
+                var loading by remember { mutableStateOf(false) }
+                var message by remember { mutableStateOf("") }
+                var vpnActive by vpnState
+
+                fun saveSession(s: AuthSession) {
+                    prefs.edit().putString("access_token", s.accessToken).putString("refresh_token", s.refreshToken)
+                        .putString("user_id", s.userId).putString("email", s.email).apply()
+                    session = s
+                }
+                fun loadHome(s: AuthSession, clearMessage: Boolean = true) {
+                    lifecycleScope.launch {
+                        loading = true
+                        if (clearMessage) message = ""
+                        try {
+                            val data = withContext(Dispatchers.IO) {
+                                val refreshed = if (s.accessToken.isBlank()) NetSwapApi.refresh(s.refreshToken) else s
+                                Pair(refreshed, Pair(NetSwapApi.profileUid(refreshed), NetSwapApi.requests(refreshed)))
+                            }
+                            saveSession(data.first); uid = data.second.first; requests = data.second.second
+                        } catch (e: Exception) { message = e.message ?: "Could not load account data." }
+                        loading = false
+                    }
+                }
+
+                LaunchedEffect(session?.userId) { session?.let { loadHome(it) } }
+
+                if (session == null) {
+                    AuthScreen(loading, message,
+                        onLogin = { email, password ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try { saveSession(withContext(Dispatchers.IO) { NetSwapApi.signIn(email, password) }) }
+                                catch (e: Exception) { message = e.message ?: "Login failed." }
+                                loading = false
+                            }
+                        },
+                        onSignUp = { email, password ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try {
+                                    val result = withContext(Dispatchers.IO) { NetSwapApi.signUp(email, password) }
+                                    if (result.optString("access_token").isNotBlank() && result.optJSONObject("user") != null) {
+                                        val u = result.getJSONObject("user")
+                                        saveSession(AuthSession(result.getString("access_token"), result.optString("refresh_token"), u.getString("id"), u.optString("email", email)))
+                                    } else message = "Account created. Email verification may be required. Verify it, then log in."
+                                } catch (e: Exception) { message = e.message ?: "Sign up failed." }
+                                loading = false
+                            }
+                        })
+                } else {
+                    HomeScreen(session!!, uid, requests, loading, message,
+                        onRefresh = { loadHome(session!!) },
+                        vpnActive = vpnActive,
+                        onVpnSetup = { startVpnWithNotificationPermission() },
+                        onVpnDisconnect = { disconnectVpnService(); vpnActive = false },
+                        onSend = { friendUid, quota ->
+                            lifecycleScope.launch {
+                                loading = true; message = ""
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        val friend = NetSwapApi.lookupUid(session!!, friendUid)
+                                            ?: throw IllegalArgumentException("No NetSwap user found with that UID.")
+                                        NetSwapApi.sendRequest(session!!, friend.userId, quota)
+                                    }
+                                    message = "Sharing request sent. Your friend must accept it."
+                                    loadHome(session!!)
+                                } catch (e: Exception) { message = e.message ?: "Could not send request."; loading = false }
+                            }
+                        },
+                        onRespond = { request, status ->
+                            lifecycleScope.launch {
+                                loading = true
+                                try { withContext(Dispatchers.IO) { NetSwapApi.respond(session!!, request.id, status) }; loadHome(session!!) }
+                                catch (e: Exception) { message = e.message ?: "Could not update request."; loading = false }
+                            }
+                        },
+                        onStartTunnel = { request -> requestUserspaceTunnel(request) },
+                        onPrepareTunnel = { request ->
+                            lifecycleScope.launch {
+                                loading = true
+                                message = "Preparing this phone's secure key…"
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        val keys = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id)
+                                        NetSwapApi.registerTunnelPublicKey(session!!, request.id, keys.first)
+                                    }
+                                    val both = result.optBoolean("sender_key_registered") && result.optBoolean("receiver_key_registered")
+                                    message = if (both) {
+                                        "This phone's key is registered. Both phones have keys; network gateway setup is still pending."
+                                    } else {
+                                        "This phone's public key is registered. Your friend must prepare their phone too."
+                                    }
+                                    loadHome(session!!, clearMessage = false)
+                                } catch (e: Exception) {
+                                    message = e.message ?: "Could not prepare the secure key."
+                                    loading = false
+                                }
+                            }
+                        },
+                        onLogout = { prefs.edit().clear().apply(); session = null; uid = ""; requests = emptyList(); message = "" }
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(vpnStateReceiver) }
+        super.onDestroy()
+    }
+}
+
+@Composable
+private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,String)->Unit, onSignUp: (String,String)->Unit) {
+    var signup by remember { mutableStateOf(false) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    Surface(Modifier.fillMaxSize(), color = Cream) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+            Text("NetSwap", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text("Share a little. Stay connected.", color = Muted)
+            Spacer(Modifier.height(26.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(26.dp)).padding(20.dp)) {
+                Text(if (signup) "Create your account" else "Welcome back", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                if (message.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(message, color = Color(0xFF8B5A36), fontSize = 13.sp) }
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { if (signup) onSignUp(email.trim(), password) else onLogin(email.trim(), password) }, enabled = !loading && email.contains("@") && password.length >= 6, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) {
+                    Text(if (loading) "Please wait…" else if (signup) "Create account" else "Log in")
+                }
+                TextButton(onClick = { signup = !signup }) { Text(if (signup) "Already registered? Log in" else "New here? Create account") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
+    vpnActive: Boolean, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
+    onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
+    onPrepareTunnel: (ShareRequest)->Unit, onStartTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
+    var friendUid by remember { mutableStateOf("") }
+    var quota by remember { mutableStateOf(500L * 1024 * 1024) }
+    var showSend by remember { mutableStateOf(false) }
+    Surface(Modifier.fillMaxSize(), color = Cream) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 22.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Column { Text("NetSwap", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink); Text("Share a little. Stay connected.", fontSize = 13.sp, color = Muted) }
+                Box(Modifier.background(Lavender, CircleShape).padding(horizontal = 13.dp, vertical = 8.dp)) { Text("BETA", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF65568F)) }
+            }
+            Spacer(Modifier.height(18.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(24.dp)).padding(18.dp)) {
+                Text("Your NetSwap ID", color = Muted, fontSize = 13.sp)
+                Spacer(Modifier.height(6.dp))
+                Text(if (uid.isBlank()) "Loading your ID…" else uid, color = Ink, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text(session.email, color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.height(12.dp))
+                Text("Account connected • Sharing is not active yet", color = Color(0xFF3E725B), fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { showSend = !showSend }, modifier = Modifier.weight(1f)) { Text("Send data request") }
+                OutlinedButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
+            }
+            if (vpnActive) {
+                OutlinedButton(onClick = onVpnDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect VPN") }
+                Text("Test VPN route connected • Internet sharing is not active yet.", color = Muted, fontSize = 11.sp)
+            } else {
+                OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Connect WireGuard VPN") }
+                Text("Import a trusted WireGuard .conf file to connect. NetSwap friend-to-friend sharing is still under development.", color = Muted, fontSize = 11.sp)
+            }
+            if (showSend) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
+                    Text("Friend's NetSwap UID", fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(friendUid, { friendUid = it.uppercase() }, placeholder = { Text("NS-XXXXXXXXXX") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Text("Data quota")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(100L to "100 MB", 500L to "500 MB", 1024L to "1 GB").forEach { (mb,label) ->
+                            FilterChip(selected = quota == mb*1024*1024, onClick = { quota = mb*1024*1024 }, label = { Text(label) })
+                        }
+                    }
+                    Button(onClick = { onSend(friendUid, quota); showSend = false }, enabled = !loading && friendUid.startsWith("NS-") && friendUid.length >= 8, modifier = Modifier.fillMaxWidth()) { Text("Send request") }
+                }
+            }
+            if (message.isNotBlank()) { Text(message, color = Color(0xFF8B5A36), fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp)) }
+            Text("Sharing requests", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = Ink, modifier = Modifier.padding(vertical = 8.dp))
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(requests, key = { it.id }) { r ->
+                    val incoming = r.receiverId == session.userId
+                    Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
+                        Text(if (incoming) "Incoming request" else "You sent a request", fontWeight = FontWeight.SemiBold, color = Ink)
+                        Text("${r.quotaBytes / (1024*1024)} MB • ${r.status.uppercase()}", color = Muted, fontSize = 12.sp)
+                        if (incoming && r.status == "pending") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { onRespond(r, "approved") }, modifier = Modifier.weight(1f)) { Text("Accept") }
+                                OutlinedButton(onClick = { onRespond(r, "rejected") }, modifier = Modifier.weight(1f)) { Text("Decline") }
+                            }
+                        } else if (!incoming && r.status in listOf("pending","approved")) {
+                            TextButton(onClick = { onRespond(r, "cancelled") }) { Text("Cancel request") }
+                        }
+                        if (r.status == "approved") {
+                            OutlinedButton(
+                                onClick = { onPrepareTunnel(r) },
+                                enabled = !loading,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Prepare secure tunnel key") }
+                            Text("Creates a device-protected key and registers only its public part.", color = Muted, fontSize = 11.sp)
+                            OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start secure peer tunnel") }
+                        }
+                    }
+                }
+            }
+            TextButton(onClick = onLogout, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Log out") }
+        }
+    }
+}
+}error" } }
+        ).also { it.start() }
     }
 
     private fun launchUserspaceVpn(id: String, key: String) {
