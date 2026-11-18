@@ -20,12 +20,12 @@ import java.net.Socket
 class ProtectedUpstreamSockets(
     private val vpnService: VpnService,
     private val upstreamNetwork: Network? = null
-) : Closeable {
+) : Closeable, TcpUpstreamOpener {
     private val sockets = LinkedHashSet<Closeable>()
     private var closed = false
 
     @Synchronized
-    fun openTcp(destination: InetSocketAddress, connectTimeoutMs: Int = 10_000): Socket {
+    override fun openTcp(destination: InetSocketAddress, connectTimeoutMs: Int): Socket {
         check(!closed) { "Upstream socket factory is closed" }
         require(!destination.isUnresolved && destination.port in 1..65535) {
             "Invalid TCP destination"
