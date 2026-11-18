@@ -9,6 +9,7 @@ import java.net.URL
 data class AuthSession(val accessToken: String, val refreshToken: String, val userId: String, val email: String)
 data class Friend(val userId: String, val uid: String, val displayName: String?)
 data class ShareRequest(val id: String, val senderId: String, val receiverId: String, val quotaBytes: Long, val usedBytes: Long, val status: String, val createdAt: String)
+data class PeerSignal(val id: String, val requestId: String, val fromUserId: String, val type: String, val payload: JSONObject, val createdAt: String)
 
 object NetSwapApi {
     private val base = BuildConfig.SUPABASE_URL
@@ -108,6 +109,56 @@ object NetSwapApi {
         require(status == "approved" || status == "rejected" || status == "cancelled")
         val body = JSONObject().put("status", status).put("responded_at", java.time.Instant.now().toString())
         call("/rest/v1/sharing_requests?id=eq.${enc(requestId)}", "PATCH", session.accessToken, body, "return=minimal")
+    }
+
+
+    /**
+     * Sends one short-lived WebRTC signaling message to the other approved participant.
+     * Payloads are SDP/ICE metadata only; user traffic must never be sent through this table.
+     */
+    fun sendPeerSignal(
+        session: AuthSession,
+        requestId: String,
+        peerUserId: String,
+        type: String,
+        payload: JSONObject
+    ) {
+        require(type in setOf("offer", "answer", "ice", "hangup")) { "Unsupported signaling message." }
+        require(peerUserId.isNotBlank() && peerUserId != session.userId) { "Invalid peer." }
+        require(payload.toString().toByteArray(Charsets.UTF_8).size <= 12 * 1024) {
+            "Signaling message is too large."
+        }
+        call(
+            "/rest/v1/netswap_signals",
+            "POST",
+            session.accessToken,
+            JSONObject()
+                .put("request_id", requestId)
+                .put("from_user_id", session.userId)
+                .put("to_user_id", peerUserId)
+                .put("message_type", type)
+                .put("payload", payload),
+            "return=minimal"
+        )
+    }
+
+    /** Reads pending, unexpired signaling messages addressed to the signed-in user. */
+    fun pendingPeerSignals(session: AuthSession, requestId: String): List<PeerSignal> {
+        val filter = "select=id,request_id,from_user_id,message_type,payload,created_at" +
+            "&request_id=eq.${enc(requestId)}&to_user_id=eq.${enc(session.userId)}" +
+            "&expires_at=gt.${enc(java.time.Instant.now().toString())}&order=created_at.asc&limit=100"
+        val rows = JSONArray(call("/rest/v1/netswap_signals?$filter", "GET", session.accessToken))
+        return (0 until rows.length()).map { i ->
+            val row = rows.getJSONObject(i)
+            PeerSignal(
+                id = row.getString("id"),
+                requestId = row.getString("request_id"),
+                fromUserId = row.getString("from_user_id"),
+                type = row.getString("message_type"),
+                payload = row.getJSONObject("payload"),
+                createdAt = row.optString("created_at")
+            )
+        }
     }
 
     private fun enc(value: String) = URLEncoder.encode(value, "UTF-8")
