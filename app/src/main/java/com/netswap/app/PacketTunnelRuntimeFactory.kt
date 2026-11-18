@@ -34,10 +34,11 @@ object PacketTunnelRuntimeFactory {
                 "Receiver tunnel must not bind sender cellular upstream."
             }
         }
+        val sessionQuota = SessionTrafficQuota(config.quotaBytes)
         val upstreamSockets = if (config.isSender) {
             ProtectedUpstreamSockets(vpnService, requireNotNull(senderUpstreamNetwork))
         } else null
-        val senderProxy = upstreamSockets?.let { SenderSocks5Runtime(it) }
+        val senderProxy = upstreamSockets?.let { SenderSocks5Runtime(it, sessionQuota) }
         val engine = NativeWireGuardEngine(
             privateKey = privateKey.copyOf(),
             peerPublicKey = remotePublicKeyBytes
@@ -49,6 +50,7 @@ object PacketTunnelRuntimeFactory {
                 endpoint = config.endpoint,
                 protectSocket = { socket -> vpnService.protect(socket) },
                 quotaBytes = config.quotaBytes,
+                sharedQuota = sessionQuota,
                 onGateResult = onGateResult,
                 onFailure = onFailure
             )
