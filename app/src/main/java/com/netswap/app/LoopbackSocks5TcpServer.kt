@@ -27,7 +27,8 @@ class LoopbackSocks5TcpServer(
     private val username: String,
     private val password: String,
     private val maxClients: Int = 8,
-    private val udpUpstream: UdpUpstreamOpener? = null
+    private val udpUpstream: UdpUpstreamOpener? = null,
+    private val quota: SessionTrafficQuota? = null
 ) : Closeable {
     private val running = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
@@ -106,7 +107,9 @@ class LoopbackSocks5TcpServer(
                         return
                     }
                     downstream.soTimeout = 0
-                    LoopbackSocks5UdpAssociation(udp).use { it.run(downstream, output) }
+                    LoopbackSocks5UdpAssociation(udp, quota = quota, onQuotaExhausted = { close() }).use {
+                        it.run(downstream, output)
+                    }
                 }
                 1 -> {
                     if (request.port == 0 || request.address.isAnyLocalAddress || request.address.isMulticastAddress) {
@@ -194,8 +197,8 @@ class LoopbackSocks5TcpServer(
     }
 
     private fun relay(client: Socket, remote: Socket) {
-        val first = Thread({ copy(client, remote) }, "NetSwap-SOCKS-up")
-        val second = Thread({ copy(remote, client) }, "NetSwap-SOCKS-down")
+        val first = Thread({ copy(client, remote, TrafficDirection.RECEIVED_FROM_RECEIVER) }, "NetSwap-SOCKS-up")
+        val second = Thread({ copy(remote, client, TrafficDirection.SENT_TO_RECEIVER) }, "NetSwap-SOCKS-down")
         first.isDaemon = true; second.isDaemon = true
         first.start(); second.start()
         try { first.join(); second.join() }
@@ -203,7 +206,7 @@ class LoopbackSocks5TcpServer(
         finally { try { client.close() } catch (_: Exception) { }; try { remote.close() } catch (_: Exception) { } }
     }
 
-    private fun copy(source: Socket, destination: Socket) {
+    private fun copy(source: Socket, destination: Socket, direction: TrafficDirection) {
         try {
             val input = source.getInputStream()
             val output = destination.getOutputStream()
@@ -211,7 +214,10 @@ class LoopbackSocks5TcpServer(
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
+                val allowed = quota?.record(direction, count.toLong()) ?: true
+                if (!allowed) { close(); return }
                 output.write(buffer, 0, count); output.flush()
+                if (quota?.snapshot()?.active == false) { close(); return }
             }
         } catch (_: Exception) { }
         finally { try { destination.shutdownOutput() } catch (_: Exception) { } }
