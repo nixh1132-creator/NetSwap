@@ -64,7 +64,7 @@ data class TunnelSessionConfig(
                 endpoint = InetSocketAddress.createUnresolved(host, port),
                 localTunnelIp = localIp,
                 remoteTunnelIp = remoteIp,
-                remotePublicKey = remoteKey,
+                remotePublicKey = gatewayKey,
                 quotaBytes = quota,
                 isSender = isSender
             )
