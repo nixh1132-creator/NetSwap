@@ -39,6 +39,9 @@ data class TunnelSessionConfig(
             }
             require(remoteKey.isNotBlank()) { "Your friend's tunnel key is not registered yet." }
 
+            val gatewayKey = row.optString("gateway_public_key")
+            require(gatewayKey.isNotBlank()) { "Secure gateway public key is not configured yet." }
+
             val localIp = row.optString(if (isSender) "sender_tunnel_ip" else "receiver_tunnel_ip")
             val remoteIp = row.optString(if (isSender) "receiver_tunnel_ip" else "sender_tunnel_ip")
             require(isIpv4(localIp) && isIpv4(remoteIp) && localIp != remoteIp) {
