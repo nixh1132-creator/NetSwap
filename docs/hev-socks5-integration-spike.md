@@ -42,6 +42,12 @@ The native entry point accepts a single file descriptor and runs until stopped. 
 
 **Descriptor ownership remains the blocker.** Passing the Android VPN TUN fd directly to Hev while `TunPacketPump` reads it would create competing readers and lose packets. The next experiment should test a dedicated packet-preserving local descriptor pair (for example, a datagram socketpair) between the WireGuard packet pump and Hev, and prove that Hev's Android tunnel backend accepts it without requiring TUN-specific ioctls. This is an experiment only; do not enable it in the app until packet boundaries, bidirectional delivery, cancellation, and descriptor lifetime are tested.
 
+## Socketpair compatibility and descriptor ownership audit (2026-11-18)
+
+Inspection of the pinned `hev-socks5-tunnel.c` shows that the external descriptor path sets `FIONBIO` with `ioctl`, then uses the tunnel read/write abstraction for packet I/O. A Unix datagram socket supports `FIONBIO` and preserves one datagram per read, so the proposed `AF_UNIX/SOCK_DGRAM` pair is a plausible adapter candidate. This source inspection is not a runtime compatibility proof: Hev's full read/write and shutdown behavior still needs device-level testing.
+
+The Kotlin adapter now exposes `duplicateHevDescriptor()`. The caller must pass the duplicated descriptor to Hev, wait for `TProxyStopService` to return, and then close the duplicate. The socketpair object retains ownership of its original descriptor, avoiding a double-close/use-after-close race between Kotlin and the native worker.
+
 ## Spike acceptance gates
 
 - Pin an immutable upstream commit and vendor the MIT licence/copyright notices.
