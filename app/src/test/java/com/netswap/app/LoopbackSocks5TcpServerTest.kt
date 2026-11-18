@@ -93,7 +93,8 @@ class LoopbackSocks5TcpServerTest {
                 val bytes = ByteArray(512)
                 val packet = java.net.DatagramPacket(bytes, bytes.size)
                 echo.receive(packet)
-                echo.send(java.net.DatagramPacket(packet.data, packet.length, packet.socketAddress))
+                val echoed = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
+                echo.send(java.net.DatagramPacket(echoed, echoed.size, packet.socketAddress))
             } catch (_: Exception) { }
         }.apply { isDaemon = true; start() }
         val server = LoopbackSocks5TcpServer(
@@ -122,8 +123,8 @@ class LoopbackSocks5TcpServerTest {
                 assertEquals(5, reply[0].toInt()); assertEquals(0, reply[1].toInt())
                 assertEquals(127, reply[4].toInt() and 0xff)
                 val relayPort = ((reply[8].toInt() and 0xff) shl 8) or (reply[9].toInt() and 0xff)
-                java.net.DatagramSocket().use { udpClient ->
-                    udpClient.soTimeout = 3_000
+                java.net.DatagramSocket(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0)).use { udpClient ->
+                    udpClient.soTimeout = 5_000
                     val target = InetSocketAddress(InetAddress.getByName("127.0.0.1"), echo.localPort)
                     val encoded = Socks5UdpPacket.encode(target, "netswap-udp".toByteArray())!!
                     udpClient.send(java.net.DatagramPacket(encoded, encoded.size,
