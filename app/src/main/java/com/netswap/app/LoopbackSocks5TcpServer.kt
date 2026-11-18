@@ -13,6 +13,7 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Bounded SOCKS5 TCP CONNECT server for sender-side upstream access.
@@ -30,9 +31,12 @@ class LoopbackSocks5TcpServer(
     private val maxClients: Int = 8
 ) : Closeable {
     private val running = AtomicBoolean(false)
+    private val closed = AtomicBoolean(false)
+    private val activeClients = ConcurrentHashMap.newKeySet<Socket>()
+    private val clientLimit = maxClients.coerceIn(1, 16)
     private val workers = ThreadPoolExecutor(
-        2, maxClients.coerceIn(1, 16), 30, TimeUnit.SECONDS,
-        ArrayBlockingQueue(maxClients.coerceIn(1, 16)),
+        minOf(2, clientLimit), clientLimit, 30, TimeUnit.SECONDS,
+        ArrayBlockingQueue(clientLimit),
         { task -> Thread(task, "NetSwap-SOCKS-worker").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy()
     )
@@ -48,6 +52,7 @@ class LoopbackSocks5TcpServer(
     /** Starts on 127.0.0.1 only. Returns the ephemeral TCP port. */
     @Synchronized
     fun start(): Int {
+        check(!closed.get()) { "SOCKS5 server is closed" }
         check(running.compareAndSet(false, true)) { "SOCKS5 server already started" }
         try {
             val socket = ServerSocket()
@@ -75,8 +80,12 @@ class LoopbackSocks5TcpServer(
                     client.close()
                     break
                 }
+                activeClients.add(client)
                 try {
-                    workers.execute { handleClient(client) }
+                    workers.execute {
+                        try { handleClient(client) }
+                        finally { activeClients.remove(client) }
+                    }
                 } catch (_: Exception) {
                     try { client.close() } catch (_: Exception) { }
                 }
@@ -226,9 +235,12 @@ class LoopbackSocks5TcpServer(
     }
 
     override fun close() {
-        if (!running.compareAndSet(true, false)) return
+        if (!closed.compareAndSet(false, true)) return
+        running.set(false)
         try { listener?.close() } catch (_: Exception) { }
         listener = null
+        activeClients.forEach { try { it.close() } catch (_: Exception) { } }
+        activeClients.clear()
         workers.shutdownNow()
         try { acceptThread?.join(1_000) } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
