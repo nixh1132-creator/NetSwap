@@ -73,7 +73,7 @@ object PacketTunnelRuntimeFactory {
             try {
                 bridge.start()
             } catch (failure: Exception) {
-                senderProxy?.close()
+                close()
                 throw failure
             }
         }
@@ -81,6 +81,7 @@ object PacketTunnelRuntimeFactory {
         fun senderProxyInfo(): SenderSocks5Runtime.Info? = senderProxy?.info()
         fun revoke() {
             senderProxy?.close()
+            upstreamSockets?.close()
             bridge.revoke()
         }
         fun snapshot(): TrafficQuotaSnapshot = bridge.snapshot()
