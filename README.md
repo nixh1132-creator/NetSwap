@@ -20,7 +20,13 @@ A sender approves a specific receiver UID and grants a defined data allowance. T
 - Sender-side protected upstream sockets and an authenticated loopback SOCKS5 TCP/UDP runtime prototype.
 - Android, Rust, relay-agent, and packet/quota unit tests in GitHub Actions.
 
-## Gateway v1 scaffold added\n\n- Added `docs/netswap-gateway-v1.md` with the NetSwap-specific Ubuntu WireGuard gateway layout, secure server-only credential handling, and install/verification steps.\n- Added `scripts/install-netswap-gateway.sh` to prepare the host-side WireGuard service and relay-agent systemd unit.\n- No public host has been provisioned. The gateway is not online, and this scaffold does not yet forward receiver traffic through the sender phone.\n\n## Not yet end-to-end internet sharing
+## Gateway v1 scaffold added
+
+- Added `docs/netswap-gateway-v1.md` with the NetSwap-specific Ubuntu WireGuard gateway layout, secure server-only credential handling, and install/verification steps.
+- Added `scripts/install-netswap-gateway.sh` to prepare the host-side WireGuard service and relay-agent systemd unit.
+- No public host has been provisioned. The gateway is not online, and this scaffold does not yet forward receiver traffic through the sender phone.
+
+## Not yet end-to-end internet sharing
 
 The current build is still a prototype. A sender SOCKS5 runtime exists, but it is not yet connected to a complete TUN-to-SOCKS packet translation path. The receiver-to-sender-to-internet packet route has not been proven on two physical phones.
 
