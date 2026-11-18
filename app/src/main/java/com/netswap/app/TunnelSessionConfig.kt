@@ -14,7 +14,8 @@ data class TunnelSessionConfig(
     val localTunnelIp: String,
     val remoteTunnelIp: String,
     val remotePublicKey: String,
-    val quotaBytes: Long
+    val quotaBytes: Long,
+    val isSender: Boolean
 ) {
     companion object {
         fun fromJson(row: JSONObject, userId: String, localPublicKey: String): TunnelSessionConfig {
@@ -64,7 +65,8 @@ data class TunnelSessionConfig(
                 localTunnelIp = localIp,
                 remoteTunnelIp = remoteIp,
                 remotePublicKey = remoteKey,
-                quotaBytes = quota
+                quotaBytes = quota,
+                isSender = isSender
             )
         }
 
