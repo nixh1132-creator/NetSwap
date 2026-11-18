@@ -13,7 +13,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * consume TUN packets or provide end-to-end internet sharing.
  */
 class SenderSocks5Runtime(
-    upstream: ProtectedUpstreamSockets
+    upstream: ProtectedUpstreamSockets,
+    quota: SessionTrafficQuota? = null
 ) : Closeable {
     data class Info(
         val host: String,
@@ -31,7 +32,8 @@ class SenderSocks5Runtime(
         username = username,
         password = password,
         maxClients = 8,
-        udpUpstream = upstream
+        udpUpstream = upstream,
+        quota = quota
     )
     @Volatile private var boundPort: Int? = null
 
