@@ -100,7 +100,9 @@ class LoopbackSocks5TcpServerTest {
         val server = LoopbackSocks5TcpServer(
             TcpUpstreamOpener { _, _ -> error("TCP path not used") },
             "user", "pass",
-            udpUpstream = UdpUpstreamOpener { java.net.DatagramSocket() }
+            udpUpstream = UdpUpstreamOpener {
+                java.net.DatagramSocket(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
+            }
         )
         try {
             val port = server.start()
