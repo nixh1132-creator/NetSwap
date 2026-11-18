@@ -64,7 +64,7 @@ data class TunnelSessionConfig(
             require(quota > 0L) { "Tunnel quota is invalid." }
             return TunnelSessionConfig(
                 sessionId = row.getString("id"),
-                endpoint = InetSocketAddress.createUnresolved(host, port),
+                endpoint = InetSocketAddress(host, port),
                 localTunnelIp = localIp,
                 remoteTunnelIp = remoteIp,
                 remotePublicKey = gatewayKey,
