@@ -39,6 +39,8 @@ class WebRtcPeerLink(
         peer = requireNotNull(factory.createPeerConnection(config, observer)) {
             "Unable to create WebRTC peer connection."
         }
+        val init = DataChannel.Init().apply { ordered = true }
+        attachChannel(requireNotNull(peer.createDataChannel("netswap-data", init)) { "Unable to create WebRTC data channel." })
     }
 
     /** Caller invokes on the offerer. */
@@ -90,7 +92,6 @@ class WebRtcPeerLink(
                     override fun onSetFailure(error: String?) = fail(result, error)
                 }, offerConstraints())
             }
-            override fun onSetSuccessDummy() {}
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onCreateFailure(p0: String?) {}
             override fun onSetFailure(error: String?) = fail(result, error)
