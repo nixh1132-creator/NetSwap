@@ -16,8 +16,7 @@ create table if not exists public.netswap_signals (
 );
 
 create index if not exists netswap_signals_recipient_pending_idx
-    on public.netswap_signals (to_user_id, request_id, created_at)
-    where expires_at > now();
+    on public.netswap_signals (to_user_id, request_id, created_at);
 
 alter table public.netswap_signals enable row level security;
 revoke all on public.netswap_signals from anon, authenticated;
