@@ -17,10 +17,11 @@ class PacketTunnelBridge(
     protectSocket: (DatagramSocket) -> Boolean,
     quotaBytes: Long,
     private val onGateResult: (PacketGateResult, TrafficDirection) -> Unit = { _, _ -> },
-    private val onFailure: (String) -> Unit = {}
+    private val onFailure: (String) -> Unit = {},
+    sharedQuota: SessionTrafficQuota? = null
 ) : Closeable {
     private val closed = AtomicBoolean(false)
-    private val quota = SessionTrafficQuota(quotaBytes)
+    private val quota = sharedQuota ?: SessionTrafficQuota(quotaBytes)
 
     private val udp = ProtectedUdpTransport(endpoint, protectSocket)
     private lateinit var wireGuard: WireGuardDatagramPump
