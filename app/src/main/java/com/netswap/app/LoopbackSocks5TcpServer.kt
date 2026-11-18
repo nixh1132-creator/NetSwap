@@ -6,6 +6,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -28,7 +29,8 @@ class LoopbackSocks5TcpServer(
     private val password: String,
     private val maxClients: Int = 8,
     private val udpUpstream: UdpUpstreamOpener? = null,
-    private val quota: SessionTrafficQuota? = null
+    private val quota: SessionTrafficQuota? = null,
+    private val bindAddress: InetAddress = InetAddress.getByName("127.0.0.1")
 ) : Closeable {
     private val running = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
@@ -56,7 +58,7 @@ class LoopbackSocks5TcpServer(
         try {
             val socket = ServerSocket()
             socket.reuseAddress = false
-            socket.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), maxClients)
+            socket.bind(InetSocketAddress(bindAddress, 0), maxClients)
             listener = socket
             acceptThread = Thread({ acceptLoop(socket) }, "NetSwap-SOCKS-accept").apply {
                 isDaemon = true
