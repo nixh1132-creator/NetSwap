@@ -77,7 +77,10 @@ class NetSwapUserspaceVpnService : VpnService() {
     }
 
     private fun startUserspaceVpn(requestId: String, localPublicKey: String) {
-        if (runtime != null || packetPump != null) return
+        val generation = synchronized(lifecycleLock) {
+            if (runtime != null || packetPump != null || tun != null) return
+            lifecycleGeneration.incrementAndGet()
+        }
         if (VpnService.prepare(this) != null) {
             publishState(false)
             stopSelf()
