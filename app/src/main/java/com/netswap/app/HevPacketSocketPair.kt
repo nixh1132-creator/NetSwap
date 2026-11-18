@@ -20,12 +20,18 @@ class HevPacketSocketPair private constructor(
 ) : Closeable {
     private val closed = AtomicBoolean(false)
 
-    /** Raw fd to pass to Hev's TProxyStartService(configPath, fd). */
-    fun hevFileDescriptor(): Int {
+    /**
+     * Returns an independently-owned descriptor for Hev. Pass its fd to
+     * TProxyStartService and close this duplicate only after TProxyStopService
+     * has returned. The original descriptor remains owned by this pair.
+     */
+    @Synchronized
+    fun duplicateHevDescriptor(): ParcelFileDescriptor {
         check(!closed.get()) { "Hev packet socket pair is closed" }
-        return hevDescriptor.fd
+        return ParcelFileDescriptor.dup(hevDescriptor.fileDescriptor)
     }
 
+    @Synchronized
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         try { packetDevice.close() } finally { hevDescriptor.close() }
