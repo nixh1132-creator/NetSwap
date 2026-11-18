@@ -34,6 +34,8 @@ class WebRtcPeerLink(
         continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
     }
     private var channel: DataChannel? = null
+    private val pendingIceCandidates = mutableListOf<IceCandidate>()
+    @Volatile private var remoteDescriptionReady = false
     private val peer: PeerConnection
 
     private val observer = object : PeerConnection.Observer {
@@ -96,6 +98,7 @@ class WebRtcPeerLink(
         val offer = SessionDescription(SessionDescription.Type.OFFER, sdp)
         peer.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
+                markRemoteDescriptionReady()
                 peer.createAnswer(object : SdpObserver {
                     override fun onCreateSuccess(desc: SessionDescription?) {
                         if (desc == null) { result.completeExceptionally(IllegalStateException("Empty SDP answer.")); return }
@@ -124,7 +127,10 @@ class WebRtcPeerLink(
     fun acceptAnswer(sdp: String): CompletableFuture<Unit> {
         val result = CompletableFuture<Unit>()
         peer.setRemoteDescription(object : SdpObserver {
-            override fun onSetSuccess() { result.complete(Unit) }
+            override fun onSetSuccess() {
+                markRemoteDescriptionReady()
+                result.complete(Unit)
+            }
             override fun onSetFailure(error: String?) = fail(result, error)
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onCreateFailure(p0: String?) {}
@@ -137,7 +143,29 @@ class WebRtcPeerLink(
         if (sdp.isBlank()) return false
         val mid = payload.optString("sdp_mid").ifBlank { null }
         val line = payload.optInt("sdp_mline_index", 0)
-        return peer.addIceCandidate(IceCandidate(mid, line, sdp))
+        val candidate = IceCandidate(mid, line, sdp)
+        synchronized(pendingIceCandidates) {
+            if (!remoteDescriptionReady) {
+                // Supabase polling can deliver ICE before the SDP offer/answer.
+                // Queue it until setRemoteDescription succeeds instead of dropping it.
+                if (pendingIceCandidates.size >= MAX_PENDING_ICE_CANDIDATES) return false
+                pendingIceCandidates.add(candidate)
+                return true
+            }
+        }
+        return peer.addIceCandidate(candidate)
+    }
+
+    private fun markRemoteDescriptionReady() {
+        val queued = synchronized(pendingIceCandidates) {
+            remoteDescriptionReady = true
+            pendingIceCandidates.toList().also { pendingIceCandidates.clear() }
+        }
+        queued.forEach { candidate ->
+            if (!peer.addIceCandidate(candidate)) {
+                onError("A queued WebRTC network candidate could not be added.")
+            }
+        }
     }
 
     /** Binary messages are bounded to avoid unbounded memory pressure. */
@@ -182,6 +210,7 @@ class WebRtcPeerLink(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         dataChannelReady.set(false)
+        synchronized(pendingIceCandidates) { pendingIceCandidates.clear() }
         channel?.unregisterObserver()
         channel?.close()
         channel?.dispose()
@@ -192,5 +221,6 @@ class WebRtcPeerLink(
 
     companion object {
         const val MAX_MESSAGE_BYTES = 16 * 1024
+        private const val MAX_PENDING_ICE_CANDIDATES = 256
     }
 }
