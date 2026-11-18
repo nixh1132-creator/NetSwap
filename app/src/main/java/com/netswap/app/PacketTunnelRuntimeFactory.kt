@@ -37,6 +37,7 @@ object PacketTunnelRuntimeFactory {
         val upstreamSockets = if (config.isSender) {
             ProtectedUpstreamSockets(vpnService, requireNotNull(senderUpstreamNetwork))
         } else null
+        val senderProxy = upstreamSockets?.let { SenderSocks5Runtime(it) }
         val engine = NativeWireGuardEngine(
             privateKey = privateKey.copyOf(),
             peerPublicKey = remotePublicKeyBytes
@@ -51,8 +52,9 @@ object PacketTunnelRuntimeFactory {
                 onGateResult = onGateResult,
                 onFailure = onFailure
             )
-            return Runtime(engine, bridge, upstreamSockets)
+            return Runtime(engine, bridge, upstreamSockets, senderProxy)
         } catch (failure: Exception) {
+            senderProxy?.close()
             upstreamSockets?.close()
             engine.close()
             throw failure
@@ -62,15 +64,32 @@ object PacketTunnelRuntimeFactory {
     class Runtime internal constructor(
         private val engine: NativeWireGuardEngine,
         private val bridge: PacketTunnelBridge,
-        private val upstreamSockets: ProtectedUpstreamSockets?
+        private val upstreamSockets: ProtectedUpstreamSockets?,
+        private val senderProxy: SenderSocks5Runtime?
     ) : Closeable {
-        fun start() = bridge.start()
-        fun revoke() = bridge.revoke()
+        /** Starts the sender's loopback proxy before the WireGuard packet bridge. */
+        fun start() {
+            senderProxy?.start()
+            try {
+                bridge.start()
+            } catch (failure: Exception) {
+                senderProxy?.close()
+                throw failure
+            }
+        }
+
+        fun senderProxyInfo(): SenderSocks5Runtime.Info? = senderProxy?.info()
+        fun revoke() {
+            senderProxy?.close()
+            bridge.revoke()
+        }
         fun snapshot(): TrafficQuotaSnapshot = bridge.snapshot()
 
         override fun close() {
-            try { bridge.close() } finally {
-                try { upstreamSockets?.close() } finally { engine.close() }
+            try { senderProxy?.close() } finally {
+                try { bridge.close() } finally {
+                    try { upstreamSockets?.close() } finally { engine.close() }
+                }
             }
         }
     }
