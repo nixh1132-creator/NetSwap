@@ -35,6 +35,7 @@ class WebRtcSessionController(
     private val peerUserId = if (session.userId == request.senderId) request.receiverId else request.senderId
     private val isOfferer = session.userId == request.senderId
     private var link: WebRtcPeerLink? = null
+    private var factory: PeerConnectionFactory? = null
     private var pollJob: Job? = null
 
     fun start() {
@@ -44,12 +45,13 @@ class WebRtcSessionController(
             PeerConnectionFactory.initialize(
                 PeerConnectionFactory.InitializationOptions.builder(appContext).createInitializationOptions()
             )
-            val factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
+            val peerFactory = PeerConnectionFactory.builder().createPeerConnectionFactory()
+            factory = peerFactory
             val ice = listOf(
                 PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
             )
             val peerLink = WebRtcPeerLink(
-                factory = factory,
+                factory = peerFactory,
                 iceServers = ice,
                 onSignal = { type, payload ->
                     scope.launch {
@@ -111,6 +113,8 @@ class WebRtcSessionController(
         pollJob?.cancel()
         link?.close()
         link = null
+        factory?.dispose()
+        factory = null
         scope.cancel()
     }
 }
