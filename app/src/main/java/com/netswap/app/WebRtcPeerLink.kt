@@ -7,6 +7,7 @@ import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.SessionDescription
+import org.webrtc.SdpObserver
 import java.nio.ByteBuffer
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicBoolean
@@ -34,6 +35,27 @@ class WebRtcPeerLink(
     }
     private var channel: DataChannel? = null
     private val peer: PeerConnection
+
+    private val observer = object : PeerConnection.Observer {
+        override fun onSignalingChange(state: PeerConnection.SignalingState) {}
+        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {}
+        override fun onStandardizedIceConnectionChange(state: PeerConnection.IceConnectionState) {}
+        override fun onConnectionChange(state: PeerConnection.PeerConnectionState) { onState(state) }
+        override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {}
+        override fun onIceCandidate(candidate: IceCandidate) {
+            onSignal("ice", JSONObject()
+                .put("sdp", candidate.sdp)
+                .put("sdp_mid", candidate.sdpMid)
+                .put("sdp_mline_index", candidate.sdpMLineIndex))
+        }
+        override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) {}
+        override fun onAddStream(stream: org.webrtc.MediaStream) {}
+        override fun onRemoveStream(stream: org.webrtc.MediaStream) {}
+        override fun onDataChannel(dataChannel: DataChannel) { attachChannel(dataChannel) }
+        override fun onRenegotiationNeeded() {}
+        override fun onAddTrack(receiver: org.webrtc.RtpReceiver, mediaStreams: Array<out org.webrtc.MediaStream>) {}
+    }
 
     init {
         peer = requireNotNull(factory.createPeerConnection(config, observer)) {
@@ -123,27 +145,6 @@ class WebRtcPeerLink(
         if (closed.get() || !dataChannelReady.get() || bytes.isEmpty() || bytes.size > MAX_MESSAGE_BYTES) return false
         val buffer = ByteBuffer.wrap(bytes)
         return channel?.send(DataChannel.Buffer(buffer, true)) == true
-    }
-
-    private val observer = object : PeerConnection.Observer {
-        override fun onSignalingChange(state: PeerConnection.SignalingState) {}
-        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {}
-        override fun onStandardizedIceConnectionChange(state: PeerConnection.IceConnectionState) {}
-        override fun onConnectionChange(state: PeerConnection.PeerConnectionState) { onState(state) }
-        override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {}
-        override fun onIceCandidate(candidate: IceCandidate) {
-            onSignal("ice", JSONObject()
-                .put("sdp", candidate.sdp)
-                .put("sdp_mid", candidate.sdpMid)
-                .put("sdp_mline_index", candidate.sdpMLineIndex))
-        }
-        override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) {}
-        override fun onAddStream(stream: org.webrtc.MediaStream) {}
-        override fun onRemoveStream(stream: org.webrtc.MediaStream) {}
-        override fun onDataChannel(dataChannel: DataChannel) { attachChannel(dataChannel) }
-        override fun onRenegotiationNeeded() {}
-        override fun onAddTrack(receiver: org.webrtc.RtpReceiver, mediaStreams: Array<out org.webrtc.MediaStream>) {}
     }
 
     private fun attachChannel(value: DataChannel) {
