@@ -16,6 +16,7 @@ class TunnelSessionConfigTest {
             .put("sender_tunnel_ip", "10.77.0.2")
             .put("receiver_tunnel_ip", "10.77.0.3")
             .put("gateway_endpoint", endpoint)
+            .put("gateway_public_key", "gateway-public")
             .put("status", status)
             .put("quota_bytes", 104857600L)
 
@@ -23,7 +24,7 @@ class TunnelSessionConfigTest {
         val config = TunnelSessionConfig.fromJson(row(), "user-a", "sender-public")
         assertEquals("10.77.0.2", config.localTunnelIp)
         assertEquals("10.77.0.3", config.remoteTunnelIp)
-        assertEquals("receiver-public", config.remotePublicKey)
+        assertEquals("gateway-public", config.remotePublicKey)
         assertEquals("198.51.100.10", config.endpoint.hostString)
         assertEquals(51820, config.endpoint.port)
         assertEquals(104857600L, config.quotaBytes)
@@ -34,7 +35,7 @@ class TunnelSessionConfigTest {
         val config = TunnelSessionConfig.fromJson(row(), "user-b", "receiver-public")
         assertEquals("10.77.0.3", config.localTunnelIp)
         assertEquals("10.77.0.2", config.remoteTunnelIp)
-        assertEquals("sender-public", config.remotePublicKey)
+        assertEquals("gateway-public", config.remotePublicKey)
         assertEquals(false, config.isSender)
     }
 
