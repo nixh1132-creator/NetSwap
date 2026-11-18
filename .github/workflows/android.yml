@@ -41,6 +41,27 @@ jobs:
           fi
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;27.2.12479018" "cmake;3.22.1"
+      - name: Build pinned HevSocks5Tunnel for Android ARM64
+        run: |
+          set -euo pipefail
+          git clone https://github.com/heiher/hev-socks5-tunnel.git "$RUNNER_TEMP/hev-socks5-tunnel"
+          cd "$RUNNER_TEMP/hev-socks5-tunnel"
+          git checkout e3839498a821b45d2dd19e0603e5894355a32d29
+          git submodule update --init --recursive
+          NDK_BUILD="$(find "$ANDROID_HOME/ndk/27.2.12479018" -type f -name ndk-build | head -n 1)"
+          test -x "$NDK_BUILD"
+          "$NDK_BUILD" -C "$RUNNER_TEMP/hev-socks5-tunnel" \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=Android.mk \
+            NDK_APPLICATION_MK=Application.mk \
+            NDK_OUT="$RUNNER_TEMP/hev-obj" \
+            NDK_LIBS_OUT="$RUNNER_TEMP/hev-libs" \
+            APP_ABI=arm64-v8a
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a"
+          cp "$RUNNER_TEMP/hev-libs/arm64-v8a/libhev-socks5-tunnel.so" \
+            "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/"
+          cp "$RUNNER_TEMP/hev-socks5-tunnel/LICENSE" \
+            "$GITHUB_WORKSPACE/HEV-SOCKS5-TUNNEL-LICENSE"
       - name: Install Android Rust target and cargo-ndk
         run: |
           rustup target add aarch64-linux-android
