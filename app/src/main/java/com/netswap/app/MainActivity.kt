@@ -132,16 +132,19 @@ class MainActivity : ComponentActivity() {
     private fun startPeerConnection(request: ShareRequest, session: AuthSession) {
         runCatching { peerSessionController?.close() }
         peerConnectionStatus.value = "Starting peer connection…"
-        peerSessionController = WebRtcSessionController(
-            this, session, request,
+        peerSessionController = WebRtcSessionController(this, session, request,
             onState = { state -> runOnUiThread { peerConnectionStatus.value = state.name } },
-            onMessage = { bytes -> runOnUiThread { peerConnectionStatus.value = "Data channel received ${'        val intent = Intent(this, NetSwapUserspaceVpnService::class.java)
+            onMessage = { bytes -> runOnUiThread { peerConnectionStatus.value = "Data channel received " + bytes.size + " bytes" } }
+        ).also { it.start() }
+    }
+
+    private fun launchUserspaceVpn(id: String, key: String) {
+        val intent = Intent(this, NetSwapUserspaceVpnService::class.java)
             .setAction(NetSwapUserspaceVpnService.ACTION_START)
             .putExtra(NetSwapUserspaceVpnService.EXTRA_REQUEST_ID, id)
             .putExtra(NetSwapUserspaceVpnService.EXTRA_LOCAL_PUBLIC_KEY, key)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
     }
-
     private fun requestUserspaceTunnel(request: ShareRequest) {
         lifecycleScope.launch {
             try {
@@ -423,6 +426,8 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                             Text("Creates a device-protected key and registers only its public part.", color = Muted, fontSize = 11.sp)
                             OutlinedButton(onClick = { onStartPeer(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Connect peer-to-peer") }
                             Text("Peer status: ${'                            OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start secure peer tunnel") }
+                            OutlinedButton(onClick = { onStartPeer(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Connect peer-to-peer") }
+                            Text("P2P: $peerConnectionStatus • Data forwarding is not enabled yet.", color = Muted, fontSize = 11.sp)
                         }
                     }
                 }
@@ -645,9 +650,9 @@ private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,Strin
 
 @Composable
 private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
-    vpnActive: Boolean, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
+    vpnActive: Boolean, peerConnectionStatus: String, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
     onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
-    onPrepareTunnel: (ShareRequest)->Unit, onStartTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
+    onPrepareTunnel: (ShareRequest)->Unit, onStartTunnel: (ShareRequest)->Unit, onStartPeer: (ShareRequest)->Unit, onLogout: ()->Unit) {
     var friendUid by remember { mutableStateOf("") }
     var quota by remember { mutableStateOf(500L * 1024 * 1024) }
     var showSend by remember { mutableStateOf(false) }
