@@ -11,7 +11,7 @@
 #include <cerrno>
 
 extern "C" JNIEXPORT jintArray JNICALL
-Java_com_netswap_app_HevPacketSocketPair_nativeCreateDatagramPair(JNIEnv* env, jobject) {
+Java_com_netswap_app_HevPacketSocketPair_00024Companion_nativeCreateDatagramPair(JNIEnv* env, jobject) {
     int fds[2] = {-1, -1};
 #ifdef SOCK_CLOEXEC
     if (socketpair(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0, fds) != 0)
