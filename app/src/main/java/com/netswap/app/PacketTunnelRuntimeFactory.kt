@@ -38,7 +38,10 @@ object PacketTunnelRuntimeFactory {
         val upstreamSockets = if (config.isSender) {
             ProtectedUpstreamSockets(vpnService, requireNotNull(senderUpstreamNetwork))
         } else null
-        val senderProxy = upstreamSockets?.let { SenderSocks5Runtime(it, sessionQuota) }
+        // The packet bridge is the authoritative session-accounting boundary.
+        // SOCKS is a downstream adapter for the future TUN-to-socket translator;
+        // passing the same quota here would count the same payload twice.
+        val senderProxy = upstreamSockets?.let { SenderSocks5Runtime(it) }
         val engine = NativeWireGuardEngine(
             privateKey = privateKey.copyOf(),
             peerPublicKey = remotePublicKeyBytes
