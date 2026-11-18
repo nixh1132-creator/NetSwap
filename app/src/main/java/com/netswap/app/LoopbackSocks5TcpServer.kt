@@ -24,8 +24,12 @@ import java.util.concurrent.ConcurrentHashMap
  * block only: the current WireGuard packet bridge does not yet route packets
  * to this listener, so it is deliberately not started by the VPN service.
  */
+fun interface TcpUpstreamOpener {
+    fun openTcp(destination: InetSocketAddress, connectTimeoutMs: Int): Socket
+}
+
 class LoopbackSocks5TcpServer(
-    private val upstream: ProtectedUpstreamSockets,
+    private val upstream: TcpUpstreamOpener,
     private val username: String,
     private val password: String,
     private val maxClients: Int = 8
