@@ -27,6 +27,7 @@ class TunnelSessionConfigTest {
         assertEquals("198.51.100.10", config.endpoint.hostString)
         assertEquals(51820, config.endpoint.port)
         assertEquals(104857600L, config.quotaBytes)
+        assertEquals(true, config.isSender)
     }
 
     @Test fun resolvesReceiverPerspective() {
@@ -34,6 +35,7 @@ class TunnelSessionConfigTest {
         assertEquals("10.77.0.3", config.localTunnelIp)
         assertEquals("10.77.0.2", config.remoteTunnelIp)
         assertEquals("sender-public", config.remotePublicKey)
+        assertEquals(false, config.isSender)
     }
 
     @Test fun rejectsProvisioningSession() {
