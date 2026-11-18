@@ -10,6 +10,12 @@
 #include <fcntl.h>
 #include <cerrno>
 
+static void throwState(JNIEnv* env, const char* message) {
+    jclass c = env->FindClass("java/lang/IllegalStateException");
+    if (c) env->ThrowNew(c, message);
+}
+
+
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_netswap_app_HevPacketSocketPair_00024Companion_nativeCreateDatagramPair(JNIEnv* env, jobject) {
     int fds[2] = {-1, -1};
@@ -51,11 +57,6 @@ int32_t netswap_tunnel_tick(void*, uint8_t*, size_t, size_t*, uint32_t*);
 }
 
 struct EngineHandle { void* tunnel; std::mutex mutex; };
-static void throwState(JNIEnv* env, const char* message) {
-    jclass c = env->FindClass("java/lang/IllegalStateException");
-    if (c) env->ThrowNew(c, message);
-}
-
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_netswap_app_NativeWireGuardEngine_nativeCreate(JNIEnv* env, jobject, jbyteArray privateKey, jbyteArray peerKey, jint keepalive, jint index) {
     if (!privateKey || !peerKey || env->GetArrayLength(privateKey) != 32 || env->GetArrayLength(peerKey) != 32 || keepalive < 0 || keepalive > 65535) {
