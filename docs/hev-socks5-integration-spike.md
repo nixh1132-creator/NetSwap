@@ -28,6 +28,20 @@ The current NetSwap TUN descriptor also cannot simply be handed to Hev while `Pa
 5. Place quota accounting at the packet/flow boundary in both directions; a proxy byte counter alone must not replace the existing session quota gate.
 6. Keep IPv6, fragments, and unsupported UDP cases blocked until explicit tests pass.
 
+## Pinned JNI API audit (2026-11-18)
+
+The pinned source at `e3839498a821b45d2dd19e0603e5894355a32d29` exposes the following Android JNI surface in `src/hev-jni.c`:
+
+- `TProxyStartService(String configPath, int tunFd): boolean` starts a native worker and blocks that worker inside `hev_socks5_tunnel_main(configPath, tunFd)`.
+- `TProxyStopService(): boolean` calls `hev_socks5_tunnel_quit()` and joins the worker.
+- `TProxyIsRunning(): boolean` reports native worker state.
+- `TProxyGetStats(): long[]` returns transmitted packet/byte and received packet/byte counters.
+- The JNI registration defaults to Java class `hev.htproxy.TProxyService` (compile-time `PKGNAME` / `CLSNAME` overrides exist).
+
+The native entry point accepts a single file descriptor and runs until stopped. This confirms that merely packaging `libhev-socks5-tunnel.so` does not start it; NetSwap still needs a correctly registered Kotlin/JNI wrapper, a valid config, and a packet-preserving descriptor adapter.
+
+**Descriptor ownership remains the blocker.** Passing the Android VPN TUN fd directly to Hev while `TunPacketPump` reads it would create competing readers and lose packets. The next experiment should test a dedicated packet-preserving local descriptor pair (for example, a datagram socketpair) between the WireGuard packet pump and Hev, and prove that Hev's Android tunnel backend accepts it without requiring TUN-specific ioctls. This is an experiment only; do not enable it in the app until packet boundaries, bidirectional delivery, cancellation, and descriptor lifetime are tested.
+
 ## Spike acceptance gates
 
 - Pin an immutable upstream commit and vendor the MIT licence/copyright notices.
