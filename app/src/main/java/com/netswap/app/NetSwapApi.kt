@@ -129,6 +129,27 @@ object NetSwapApi {
         val servers = response.optJSONArray("iceServers")
             ?: throw IllegalStateException("TURN configuration is missing.")
         require(servers.length() in 1..8) { "Invalid ICE server configuration." }
+
+        // Do not mistake a STUN-only response for a working TURN relay.
+        val hasAuthenticatedTurn = (0 until servers.length()).any { index ->
+            val server = servers.optJSONObject(index) ?: return@any false
+            val urls = server.opt("urls")
+            val turnUrlFound = when (urls) {
+                is String -> urls.startsWith("turn:", ignoreCase = true) ||
+                    urls.startsWith("turns:", ignoreCase = true)
+                is JSONArray -> (0 until urls.length()).any { urlIndex ->
+                    val url = urls.optString(urlIndex)
+                    url.startsWith("turn:", ignoreCase = true) ||
+                        url.startsWith("turns:", ignoreCase = true)
+                }
+                else -> false
+            }
+            turnUrlFound && server.optString("username").isNotBlank() &&
+                server.optString("credential").isNotBlank()
+        }
+        check(hasAuthenticatedTurn) {
+            "TURN relay credentials are missing. Check Turnix and Metered provider settings."
+        }
         return servers
     }
 
