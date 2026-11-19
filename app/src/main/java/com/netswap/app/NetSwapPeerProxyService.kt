@@ -113,9 +113,11 @@ class NetSwapPeerProxyService : VpnService() {
             )
             controller = peerController
 
-            if (session.userId == request.senderId) {
+            // The request creator is the receiver of internet. The person whose UID was
+            // entered receives the request and is the cellular-data provider.
+            if (session.userId == request.receiverId) {
                 val network = CellularUpstreamNetwork.find(this)
-                    ?: error("Sender phone needs an active cellular internet connection.")
+                    ?: error("Provider phone needs an active cellular internet connection.")
                 val quota = SessionTrafficQuota(request.quotaBytes)
                 val senderEndpoint = PeerStreamSocketEndpoint(
                     vpnService = this,
@@ -147,25 +149,23 @@ class NetSwapPeerProxyService : VpnService() {
                 peerController.attachReceiverProxy(receiverProxy)
                 val info = receiverProxy.start()
                 peerController.start()
-                check(peerConnected.await(45, TimeUnit.SECONDS)) { "Peer did not connect within 45 seconds. VPN route was not installed." }
+                check(peerConnected.await(45, TimeUnit.SECONDS)) { "Peer did not connect within 45 seconds. Check both phones' internet." }
                 val channelDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
                 while (!peerController.isDataChannelOpen() && System.nanoTime() < channelDeadline && !stopped.get()) {
                     Thread.sleep(200)
                 }
-                check(peerController.isDataChannelOpen()) { "Peer connected, but secure data channel did not open. VPN route was not installed." }
-                // Wait for ICE gathering to finish before deciding whether TURN allocated a relay.
-                // A short fixed delay can falsely report unverified on slow mobile networks.
+                check(peerController.isDataChannelOpen()) { "Peer connected, but secure data channel did not open." }
                 val iceDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
                 while (!peerController.isIceGatheringComplete() && System.nanoTime() < iceDeadline && !stopped.get()) {
                     Thread.sleep(200)
                 }
                 startReceiverDeviceTunnel(info.port)
                 val turnStatus = if (peerController.hasTurnRelayCandidate()) {
-                    "TURN authentication verified; "
+                    "TURN relay candidate found; "
                 } else {
                     "Direct peer path active; TURN relay not verified on this network; "
                 }
-                publish(true, turnStatus + "NetSwap device-wide IPv4 forwarding is active.")
+                publish(true, turnStatus + "Internet sharing is active through your friend's mobile data.")
             }
 
             if (!stopped.get()) peerController.start()
