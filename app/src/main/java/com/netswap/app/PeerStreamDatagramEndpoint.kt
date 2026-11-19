@@ -34,44 +34,53 @@ class PeerStreamDatagramEndpoint(
 
     fun openUdp(id: Int, encoded: ByteArray): Boolean {
         if (closed.get() || id <= 0 || streams.size >= maxStreams) return false
-        val target = try { decode(encoded) } catch (failure: Exception) {
-            sendError(id, failure.message ?: "Invalid UDP destination")
-            return false
-        }
-        val socket = try { sockets.openUdp() } catch (e: Exception) {
-            sendError(id, e.message ?: "Could not open protected UDP socket")
-            return false
-        }
-        try { socket.connect(target) } catch (_: Exception) {
-            sockets.release(socket)
-            return false
-        }
-        val stream = Stream(socket, target)
-        if (streams.putIfAbsent(id, stream) != null) {
-            sockets.release(socket)
-            return false
-        }
+        val stream = Stream()
+        if (streams.putIfAbsent(id, stream) != null) return false
         return try {
             workers.execute {
-                val buffer = ByteArray(MAX_DATAGRAM)
                 try {
-                    while (!closed.get() && !stream.closed.get()) {
-                        val packet = DatagramPacket(buffer, buffer.size)
-                        socket.soTimeout = 1000
-                        try { socket.receive(packet) } catch (_: java.net.SocketTimeoutException) { continue }
-                        if (!quota.record(TrafficDirection.SENT_TO_RECEIVER, packet.length.toLong())) {
-                            sendError(id, "Session data quota exhausted.")
-                            break
+                    // Provider-side DNS and UDP socket setup must not block WebRTC callbacks.
+                    val target = decode(encoded)
+                    val socket = sockets.openUdp()
+                    try {
+                        socket.connect(target)
+                        synchronized(stream) {
+                            if (closed.get() || stream.closed.get()) {
+                                sockets.release(socket)
+                                return@execute
+                            }
+                            stream.socket = socket
+                            while (stream.pending.isNotEmpty()) {
+                                val body = stream.pending.removeFirst()
+                                socket.send(DatagramPacket(body, body.size))
+                            }
+                            stream.pendingBytes = 0
                         }
-                        if (!sendData(id, packet.data.copyOfRange(packet.offset, packet.offset + packet.length))) break
+                        val buffer = ByteArray(MAX_DATAGRAM)
+                        while (!closed.get() && !stream.closed.get()) {
+                            val packet = DatagramPacket(buffer, buffer.size)
+                            socket.soTimeout = 1000
+                            try { socket.receive(packet) } catch (_: java.net.SocketTimeoutException) { continue }
+                            if (!quota.record(TrafficDirection.SENT_TO_RECEIVER, packet.length.toLong())) {
+                                sendError(id, "Session data quota exhausted.")
+                                break
+                            }
+                            if (!sendData(id, packet.data.copyOfRange(packet.offset, packet.offset + packet.length))) break
+                        }
+                    } catch (failure: Exception) {
+                        sockets.release(socket)
+                        throw failure
                     }
-                } catch (e: Exception) {
-                    if (!closed.get() && !stream.closed.get()) sendError(id, e.message ?: "UDP receive failed")
+                } catch (failure: Exception) {
+                    if (!closed.get() && !stream.closed.get()) {
+                        sendError(id, failure.message ?: "UDP upstream connection failed")
+                    }
                 } finally { closeStream(id) }
             }
             true
         } catch (_: java.util.concurrent.RejectedExecutionException) {
-            closeStream(id); false
+            closeStream(id)
+            false
         }
     }
 
@@ -80,18 +89,36 @@ class PeerStreamDatagramEndpoint(
         val stream = streams[id] ?: return false
         if (!quota.record(TrafficDirection.RECEIVED_FROM_RECEIVER, payload.size.toLong())) {
             sendError(id, "Session data quota exhausted.")
-            closeStream(id); return false
+            closeStream(id)
+            return false
         }
-        return try {
-            val packet = DatagramPacket(payload, payload.size)
-            stream.socket.send(packet)
-            true
-        } catch (_: Exception) { closeStream(id); false }
+        synchronized(stream) {
+            if (stream.closed.get()) return false
+            val socket = stream.socket
+            if (socket == null) {
+                if (stream.pendingBytes + payload.size > MAX_PENDING_BYTES) return false
+                stream.pending.addLast(payload.copyOf())
+                stream.pendingBytes += payload.size
+                return true
+            }
+            return try {
+                socket.send(DatagramPacket(payload, payload.size))
+                true
+            } catch (_: Exception) {
+                closeStream(id)
+                false
+            }
+        }
     }
 
     fun closeStream(id: Int) {
         val stream = streams.remove(id) ?: return
-        if (stream.closed.compareAndSet(false, true)) sockets.release(stream.socket)
+        if (stream.closed.compareAndSet(false, true)) synchronized(stream) {
+            stream.pending.clear()
+            stream.pendingBytes = 0
+            stream.socket?.let(sockets::release)
+            stream.socket = null
+        }
     }
 
     override fun close() {
@@ -137,11 +164,15 @@ class PeerStreamDatagramEndpoint(
             !address.isLinkLocalAddress && !address.isSiteLocalAddress &&
             !address.isMulticastAddress
 
-    private data class Stream(
-        val socket: java.net.DatagramSocket,
-        val target: InetSocketAddress,
-        val closed: AtomicBoolean = AtomicBoolean(false)
-    )
+    private class Stream {
+        val closed = AtomicBoolean(false)
+        val pending = ArrayDeque<ByteArray>()
+        var pendingBytes = 0
+        var socket: java.net.DatagramSocket? = null
+    }
 
-    companion object { private const val MAX_DATAGRAM = PeerStreamFrame.MAX_PAYLOAD_BYTES }
+    companion object {
+        private const val MAX_DATAGRAM = PeerStreamFrame.MAX_PAYLOAD_BYTES
+        private const val MAX_PENDING_BYTES = 64 * 1024
+    }
 }
