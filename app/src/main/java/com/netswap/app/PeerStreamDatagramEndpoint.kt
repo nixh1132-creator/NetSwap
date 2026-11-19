@@ -12,12 +12,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Sender-side protected UDP endpoint for one peer UDP stream.
- * OPEN_UDP payload: ATYP + numeric IPv4/IPv6 address + big-endian port.
+ * OPEN_UDP payload: ATYP + IPv4/IPv6/domain address + big-endian port.
  * UDP_DATA payloads are raw datagram bodies; each stream has one fixed peer.
  */
 class PeerStreamDatagramEndpoint(
     vpnService: VpnService,
-    upstreamNetwork: Network?,
+    private val upstreamNetwork: Network?,
     private val quota: SessionTrafficQuota,
     private val sendData: (Int, ByteArray) -> Boolean,
     private val sendError: (Int, String) -> Boolean,
@@ -34,7 +34,10 @@ class PeerStreamDatagramEndpoint(
 
     fun openUdp(id: Int, encoded: ByteArray): Boolean {
         if (closed.get() || id <= 0 || streams.size >= maxStreams) return false
-        val target = try { decode(encoded) } catch (_: Exception) { return false }
+        val target = try { decode(encoded) } catch (failure: Exception) {
+            sendError(id, failure.message ?: "Invalid UDP destination")
+            return false
+        }
         val socket = try { sockets.openUdp() } catch (e: Exception) {
             sendError(id, e.message ?: "Could not open protected UDP socket")
             return false
@@ -99,13 +102,44 @@ class PeerStreamDatagramEndpoint(
     }
 
     private fun decode(bytes: ByteArray): InetSocketAddress {
-        require(bytes.isNotEmpty())
-        val n = when (bytes[0].toInt() and 0xff) { 1 -> 4; 4 -> 16; else -> error("UDP requires numeric IP") }
-        require(bytes.size == n + 3)
-        val port = ((bytes[n + 1].toInt() and 255) shl 8) or (bytes[n + 2].toInt() and 255)
-        require(port in 1..65535)
-        return InetSocketAddress(InetAddress.getByAddress(bytes.copyOfRange(1, n + 1)), port)
+        require(bytes.size >= 4) { "UDP destination is too short" }
+        val atyp = bytes[0].toInt() and 0xff
+        val addressLength: Int
+        val address: InetAddress
+        when (atyp) {
+            1 -> {
+                addressLength = 4
+                require(bytes.size == 1 + addressLength + 2) { "Invalid UDP IPv4 destination" }
+                address = InetAddress.getByAddress(bytes.copyOfRange(1, 5))
+            }
+            4 -> {
+                addressLength = 16
+                require(bytes.size == 1 + addressLength + 2) { "Invalid UDP IPv6 destination" }
+                address = InetAddress.getByAddress(bytes.copyOfRange(1, 17))
+            }
+            3 -> {
+                val length = bytes[1].toInt() and 0xff
+                require(length in 1..253 && bytes.size == 2 + length + 2) { "Invalid UDP domain destination" }
+                val host = bytes.copyOfRange(2, 2 + length).toString(Charsets.US_ASCII)
+                require(host.all { it.code in 33..126 }) { "Invalid UDP hostname" }
+                val network = upstreamNetwork ?: error("Provider upstream network is unavailable for DNS")
+                address = network.getAllByName(host).firstOrNull { isPublicDestination(it) }
+                    ?: error("UDP hostname did not resolve to a public address")
+                addressLength = length
+            }
+            else -> error("Unsupported UDP address type")
+        }
+        val portOffset = bytes.size - 2
+        val port = ((bytes[portOffset].toInt() and 255) shl 8) or (bytes[portOffset + 1].toInt() and 255)
+        require(port in 1..65535) { "Invalid UDP destination port" }
+        require(isPublicDestination(address)) { "Private or local UDP destinations are blocked" }
+        return InetSocketAddress(address, port)
     }
+
+    private fun isPublicDestination(address: InetAddress): Boolean =
+        !address.isAnyLocalAddress && !address.isLoopbackAddress &&
+            !address.isLinkLocalAddress && !address.isSiteLocalAddress &&
+            !address.isMulticastAddress
 
     private data class Stream(
         val socket: java.net.DatagramSocket,
