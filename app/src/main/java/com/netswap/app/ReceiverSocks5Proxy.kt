@@ -186,7 +186,7 @@ class ReceiverSocks5Proxy(
                 val portOffset = offset + len
                 val port = ((bytes[portOffset].toInt() and 255) shl 8) or (bytes[portOffset + 1].toInt() and 255)
                 if (port == 0) continue
-                val key = address.hostAddress + ":" + port
+                val key = (address.hostAddress ?: continue) + ":" + port
                 var streamId = udpStreams.entries.firstOrNull { it.value.associationId == associationId && it.value.key == key }?.key
                 if (streamId == null) {
                     streamId = allocateId()
