@@ -134,11 +134,11 @@ class PeerStreamDatagramEndpoint(
         val address: InetAddress
         when (atyp) {
             1 -> {
-                require(bytes.size == 1 + addressLength + 2) { "Invalid UDP IPv4 destination" }
+                require(bytes.size == 1 + 4 + 2) { "Invalid UDP IPv4 destination" }
                 address = InetAddress.getByAddress(bytes.copyOfRange(1, 5))
             }
             4 -> {
-                require(bytes.size == 1 + addressLength + 2) { "Invalid UDP IPv6 destination" }
+                require(bytes.size == 1 + 16 + 2) { "Invalid UDP IPv6 destination" }
                 address = InetAddress.getByAddress(bytes.copyOfRange(1, 17))
             }
             3 -> {
