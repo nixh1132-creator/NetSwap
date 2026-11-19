@@ -192,6 +192,7 @@ class MainActivity : ComponentActivity() {
                         try {
                             val data = withContext(Dispatchers.IO) {
                                 val refreshed = if (s.accessToken.isBlank()) NetSwapApi.refresh(s.refreshToken) else s
+                                NetSwapApi.ensureDisplayName(refreshed)
                                 Pair(refreshed, Pair(NetSwapApi.profileUid(refreshed), NetSwapApi.requests(refreshed)))
                             }
                             saveSession(data.first); uid = data.second.first; requests = data.second.second
@@ -321,76 +322,104 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
     onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
     onPrepareTunnel: (ShareRequest)->Unit, onStartTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
     var friendUid by remember { mutableStateOf("") }
-    var quota by remember { mutableStateOf(500L * 1024 * 1024) }
-    var showSend by remember { mutableStateOf(false) }
+    var amountMb by remember { mutableStateOf("100") }
+    var activeTab by remember { mutableStateOf("receive") }
+    val incoming = requests.filter { it.receiverId == session.userId }
+    val outgoing = requests.filter { it.senderId == session.userId }
     Surface(Modifier.fillMaxSize(), color = Cream) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 22.dp)) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 18.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Column { Text("NetSwap", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink); Text("Share a little. Stay connected.", fontSize = 13.sp, color = Muted) }
-                Box(Modifier.background(Lavender, CircleShape).padding(horizontal = 13.dp, vertical = 8.dp)) { Text("BETA", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF65568F)) }
+                Column {
+                    Text("NetSwap", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Text("Internet sharing, made simple", fontSize = 12.sp, color = Muted)
+                }
+                TextButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
             }
-            Spacer(Modifier.height(18.dp))
-            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(24.dp)).padding(18.dp)) {
-                Text("Your NetSwap ID", color = Muted, fontSize = 13.sp)
-                Spacer(Modifier.height(6.dp))
-                Text(if (uid.isBlank()) "Loading your ID…" else uid, color = Ink, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                Text(session.email, color = Muted, fontSize = 12.sp)
-                Spacer(Modifier.height(12.dp))
-                Text("Account connected • Sharing is not active yet", color = Color(0xFF3E725B), fontSize = 12.sp)
+            Spacer(Modifier.height(12.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
+                Text("Your NetSwap ID", color = Muted, fontSize = 12.sp)
+                Text(if (uid.isBlank()) "Loading…" else uid, color = Ink, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("Share this ID with your friend", color = Muted, fontSize = 11.sp)
             }
-            Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { showSend = !showSend }, modifier = Modifier.weight(1f)) { Text("Send data request") }
-                OutlinedButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
+            Spacer(Modifier.height(10.dp))
+            Column(Modifier.fillMaxWidth().background(Lavender, RoundedCornerShape(18.dp)).padding(15.dp)) {
+                Text("My SIM data balance", fontWeight = FontWeight.SemiBold, color = Ink)
+                Spacer(Modifier.height(4.dp))
+                Text("Pack ka asli remaining data abhi operator se verify nahi ho raha.", color = Ink, fontSize = 13.sp)
+                Text("Android app SIM pack balance ko directly nahi padh sakta. Galat number dikhane ke bajay balance unavailable dikhaya ja raha hai.", color = Muted, fontSize = 11.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { activeTab = "receive" }, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (activeTab == "receive") Color(0xFF8274B8) else Color(0xFFE8E2FA), contentColor = if (activeTab == "receive") White else Ink)) {
+                    Text("Receive requests")
+                }
+                Button(onClick = { activeTab = "send" }, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (activeTab == "send") Color(0xFF8274B8) else Color(0xFFE8E2FA), contentColor = if (activeTab == "send") White else Ink)) {
+                    Text("Ask for data")
+                }
+            }
+            if (activeTab == "send") {
+                Column(Modifier.fillMaxWidth().padding(top = 10.dp).background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
+                    Text("Kis friend se data chahiye?", fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(friendUid, { friendUid = it.uppercase() }, label = { Text("Friend ka NetSwap UID") },
+                        placeholder = { Text("NS-XXXXXXXXXX") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Text("Kitna data chahiye? (MB)", fontSize = 13.sp, color = Muted)
+                    OutlinedTextField(amountMb, { value -> amountMb = value.filter(Char::isDigit).take(7) },
+                        placeholder = { Text("Jaise 50 ya 100") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("50", "100", "250").forEach { value ->
+                            FilterChip(selected = amountMb == value, onClick = { amountMb = value }, label = { Text("$value MB") })
+                        }
+                    }
+                    val parsedMb = amountMb.toLongOrNull() ?: 0L
+                    Button(onClick = { onSend(friendUid.trim(), parsedMb * 1024L * 1024L) },
+                        enabled = !loading && friendUid.startsWith("NS-") && friendUid.length >= 8 && parsedMb in 1..1048576,
+                        modifier = Modifier.fillMaxWidth()) { Text(if (loading) "Sending…" else "Send data request") }
+                    Text("Request sirf usi UID wale friend ko jayegi.", color = Muted, fontSize = 11.sp)
+                }
+            } else {
+                Text("Tumhare paas aayi requests", fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = Ink,
+                    modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+                if (incoming.isEmpty()) {
+                    Text("Abhi koi request nahi aayi.", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 12.dp))
+                }
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    items(incoming, key = { it.id }) { r ->
+                        Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(16.dp)).padding(13.dp)) {
+                            Text("From: ${r.senderName}", fontWeight = FontWeight.SemiBold, color = Ink)
+                            Text("${r.quotaBytes / (1024*1024)} MB maange • ${r.status.uppercase()}", color = Muted, fontSize = 12.sp)
+                            if (r.status == "pending") Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { onRespond(r, "approved") }, modifier = Modifier.weight(1f)) { Text("Accept") }
+                                OutlinedButton(onClick = { onRespond(r, "rejected") }, modifier = Modifier.weight(1f)) { Text("Reject") }
+                            }
+                            if (r.status == "approved") {
+                                Text("Request accepted", color = Color(0xFF3E725B), fontSize = 12.sp)
+                                OutlinedButton(onClick = { onPrepareTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Prepare secure connection") }
+                                OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start connection") }
+                            }
+                        }
+                    }
+                }
+            }
+            if (activeTab == "send") {
+                Text("Tumhari bheji requests", fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = Ink, modifier = Modifier.padding(top = 10.dp, bottom = 5.dp))
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(outgoing, key = { it.id }) { r ->
+                        Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(15.dp)).padding(12.dp)) {
+                            Text("To: ${r.receiverName}", fontWeight = FontWeight.SemiBold)
+                            Text("${r.quotaBytes / (1024*1024)} MB • ${r.status.uppercase()}", color = Muted, fontSize = 12.sp)
+                            if (r.status in listOf("pending", "approved")) TextButton(onClick = { onRespond(r, "cancelled") }) { Text("Cancel request") }
+                        }
+                    }
+                }
             }
             if (vpnActive) {
-                OutlinedButton(onClick = onVpnDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect VPN") }
-                Text("Test VPN route connected • Internet sharing is not active yet.", color = Muted, fontSize = 11.sp)
-            } else {
-                Text("NetSwap VPN permission is requested automatically when you start an approved peer tunnel.", color = Muted, fontSize = 11.sp)
+                OutlinedButton(onClick = onVpnDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect") }
             }
-            if (showSend) {
-                Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
-                    Text("Friend's NetSwap UID", fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(friendUid, { friendUid = it.uppercase() }, placeholder = { Text("NS-XXXXXXXXXX") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    Text("Data quota")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(100L to "100 MB", 500L to "500 MB", 1024L to "1 GB").forEach { (mb,label) ->
-                            FilterChip(selected = quota == mb*1024*1024, onClick = { quota = mb*1024*1024 }, label = { Text(label) })
-                        }
-                    }
-                    Button(onClick = { onSend(friendUid, quota); showSend = false }, enabled = !loading && friendUid.startsWith("NS-") && friendUid.length >= 8, modifier = Modifier.fillMaxWidth()) { Text("Send request") }
-                }
-            }
-            if (message.isNotBlank()) { Text(message, color = Color(0xFF8B5A36), fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp)) }
-            Text("Sharing requests", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = Ink, modifier = Modifier.padding(vertical = 8.dp))
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(requests, key = { it.id }) { r ->
-                    val incoming = r.receiverId == session.userId
-                    Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
-                        Text(if (incoming) "Incoming request" else "You sent a request", fontWeight = FontWeight.SemiBold, color = Ink)
-                        Text("${r.quotaBytes / (1024*1024)} MB • ${r.status.uppercase()}", color = Muted, fontSize = 12.sp)
-                        if (incoming && r.status == "pending") {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { onRespond(r, "approved") }, modifier = Modifier.weight(1f)) { Text("Accept") }
-                                OutlinedButton(onClick = { onRespond(r, "rejected") }, modifier = Modifier.weight(1f)) { Text("Decline") }
-                            }
-                        } else if (!incoming && r.status in listOf("pending","approved")) {
-                            TextButton(onClick = { onRespond(r, "cancelled") }) { Text("Cancel request") }
-                        }
-                        if (r.status == "approved") {
-                            OutlinedButton(
-                                onClick = { onPrepareTunnel(r) },
-                                enabled = !loading,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Prepare secure tunnel key") }
-                            Text("Creates a device-protected key and registers only its public part.", color = Muted, fontSize = 11.sp)
-                            OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start secure peer tunnel") }
-                        }
-                    }
-                }
-            }
+            if (message.isNotBlank()) Text(message, color = Color(0xFF8B5A36), fontSize = 12.sp, modifier = Modifier.padding(vertical = 5.dp))
             TextButton(onClick = onLogout, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Log out") }
         }
     }
