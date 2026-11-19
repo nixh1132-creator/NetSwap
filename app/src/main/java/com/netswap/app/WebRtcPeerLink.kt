@@ -176,6 +176,8 @@ class WebRtcPeerLink(
         }
     }
 
+    fun isDataChannelOpen(): Boolean = dataChannelReady.get() && channel?.state() == DataChannel.State.OPEN
+
     /** Binary messages are bounded to avoid unbounded memory pressure. */
     fun send(bytes: ByteArray): Boolean {
         if (closed.get() || !dataChannelReady.get() || bytes.isEmpty() || bytes.size > MAX_MESSAGE_BYTES) return false
