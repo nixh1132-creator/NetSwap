@@ -107,7 +107,7 @@ class ReceiverSocks5Proxy(
             val command = input.readUnsignedByte()
             input.readUnsignedByte() // reserved
             val atyp = input.readUnsignedByte()
-            if (command == 3) { handleUdpAssociate(socket, input, output); return }
+            if (command == 3) { handleUdpAssociate(socket, input, output, atyp); return }
             if (command != 1) { reply(output, 7); return }
             val address = when (atyp) {
                 1 -> ByteArray(4).also(input::readFully)
@@ -149,8 +149,7 @@ class ReceiverSocks5Proxy(
     }
 
 
-    private fun handleUdpAssociate(control: Socket, input: DataInputStream, output: DataOutputStream) {
-        val atyp = input.readUnsignedByte()
+    private fun handleUdpAssociate(control: Socket, input: DataInputStream, output: DataOutputStream, atyp: Int) {
         val rawAddress = when (atyp) {
             1 -> ByteArray(4).also(input::readFully)
             4 -> ByteArray(16).also(input::readFully)
@@ -214,7 +213,7 @@ class ReceiverSocks5Proxy(
     private fun allocateId(): Int {
         repeat(Int.MAX_VALUE) {
             val id = nextId.getAndUpdate { if (it >= Int.MAX_VALUE - 1) 1 else it + 1 }
-            if (id > 0 && !clients.containsKey(id)) return id
+            if (id > 0 && !clients.containsKey(id) && !udpStreams.containsKey(id)) return id
         }
         throw IOException("No peer stream identifiers available.")
     }
