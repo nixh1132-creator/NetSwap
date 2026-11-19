@@ -1,4 +1,5 @@
 -- Allow participants to see only the public profile rows connected to their requests.
+drop policy if exists "Participants can read related NetSwap profiles" on public.profiles;
 create policy "Participants can read related NetSwap profiles"
 on public.profiles
 for select
