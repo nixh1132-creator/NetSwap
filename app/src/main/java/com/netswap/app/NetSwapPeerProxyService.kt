@@ -103,7 +103,7 @@ class NetSwapPeerProxyService : VpnService() {
                     quota = quota,
                     sendData = { id, bytes -> peerController.sendTcpData(id, bytes) },
                     sendClose = { id -> peerController.closeStream(id) },
-                    sendError = { id, message -> peerController.openTcp(id, message.toByteArray()) }
+                    sendError = { id, message -> peerController.sendStreamError(id, message) }
                 )
                 endpoint = senderEndpoint
                 peerController.attachSocketEndpoint(senderEndpoint)
