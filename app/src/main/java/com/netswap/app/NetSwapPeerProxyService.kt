@@ -40,6 +40,7 @@ class NetSwapPeerProxyService : VpnService() {
     @Volatile private var hevRuntime: HevTunnelRuntime? = null
     @Volatile private var hevPair: HevPacketSocketPair? = null
     @Volatile private var hevRelay: HevTunPacketRelay? = null
+    @Volatile private var usageReporter: SessionUsageReporter? = null
 
     override fun onBind(intent: Intent?): IBinder? = super.onBind(intent)
 
@@ -150,6 +151,10 @@ class NetSwapPeerProxyService : VpnService() {
                 val network = CellularUpstreamNetwork.find(this)
                     ?: error("Provider phone needs an active internet connection (mobile data, Wi-Fi, or hotspot).")
                 val quota = SessionTrafficQuota(request.quotaBytes)
+                // Local quota gates every payload; authenticated byte deltas are persisted in batches.
+                usageReporter = SessionUsageReporter(quota) { bytes ->
+                    NetSwapApi.recordTrafficUsage(session, request.id, bytes)
+                }.start()
                 val senderEndpoint = PeerStreamSocketEndpoint(
                     vpnService = this,
                     upstreamNetwork = network,
@@ -266,6 +271,8 @@ class NetSwapPeerProxyService : VpnService() {
 
     private fun stopPeer() {
         if (!stopped.compareAndSet(false, true)) return
+        try { usageReporter?.close() } catch (_: Exception) {}
+        usageReporter = null
         try { controller?.close() } catch (_: Exception) {}
         controller = null
         try { hevRelay?.close() } catch (_: Exception) {}
