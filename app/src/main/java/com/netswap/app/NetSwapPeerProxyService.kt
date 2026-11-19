@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.IBinder
 import org.webrtc.PeerConnection
 import java.util.concurrent.Executors
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -92,12 +94,14 @@ class NetSwapPeerProxyService : VpnService() {
             } ?: error("Approved sharing request not found. Refresh the request list.")
             check(!stopped.get()) { "Connection cancelled." }
 
+            val peerConnected = CountDownLatch(1)
             val peerController = WebRtcSessionController(
                 context = this,
                 session = session,
                 request = request,
                 onState = { state ->
                     if (state == PeerConnection.PeerConnectionState.CONNECTED) {
+                        peerConnected.countDown()
                         publish(true, "Peer connected. Receiver proxy is available on localhost.")
                     } else if (state == PeerConnection.PeerConnectionState.FAILED ||
                         state == PeerConnection.PeerConnectionState.DISCONNECTED) {
@@ -142,8 +146,10 @@ class NetSwapPeerProxyService : VpnService() {
                 proxy = receiverProxy
                 peerController.attachReceiverProxy(receiverProxy)
                 val info = receiverProxy.start()
+                peerController.start()
+                check(peerConnected.await(45, TimeUnit.SECONDS)) { "Peer did not connect within 45 seconds. VPN route was not installed." }
                 startReceiverDeviceTunnel(info.port)
-                publish(true, "NetSwap device tunnel active. Connecting peer…")
+                publish(true, "NetSwap device-wide IPv4 forwarding is active.")
             }
 
             if (!stopped.get()) peerController.start()
