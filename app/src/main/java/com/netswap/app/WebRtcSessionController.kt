@@ -89,7 +89,9 @@ class WebRtcSessionController(
                             else if (socketEndpoint?.writeTcp(streamId, payload) != true) bridgeError(streamId, "TCP stream write failed.")
                         }
                         PeerStreamRouter.Protocol.UDP -> {
-                            if (datagramEndpoint?.sendUdp(streamId, payload) != true) bridgeError(streamId, "UDP datagram send failed.")
+                            val receiver = receiverProxy
+                            if (receiver != null) receiver.onPeerUdpData(streamId, payload)
+                            else if (datagramEndpoint?.sendUdp(streamId, payload) != true) bridgeError(streamId, "UDP datagram send failed.")
                         }
                     }
                 },
