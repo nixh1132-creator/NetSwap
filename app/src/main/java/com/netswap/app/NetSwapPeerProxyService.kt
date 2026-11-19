@@ -153,8 +153,18 @@ class NetSwapPeerProxyService : VpnService() {
                     Thread.sleep(200)
                 }
                 check(peerController.isDataChannelOpen()) { "Peer connected, but secure data channel did not open. VPN route was not installed." }
+                // A relay candidate proves the TURN server accepted credentials and allocated a relay address.
+                val turnDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12)
+                while (!peerController.hasTurnRelayCandidate() && System.nanoTime() < turnDeadline && !stopped.get()) {
+                    Thread.sleep(200)
+                }
                 startReceiverDeviceTunnel(info.port)
-                publish(true, "NetSwap device-wide IPv4 forwarding is active.")
+                val turnStatus = if (peerController.hasTurnRelayCandidate()) {
+                    "TURN authentication verified; "
+                } else {
+                    "Direct peer path active; TURN relay not verified on this network; "
+                }
+                publish(true, turnStatus + "NetSwap device-wide IPv4 forwarding is active.")
             }
 
             if (!stopped.get()) peerController.start()
