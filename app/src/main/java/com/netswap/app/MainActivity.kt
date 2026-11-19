@@ -347,8 +347,7 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                 OutlinedButton(onClick = onVpnDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect VPN") }
                 Text("Test VPN route connected • Internet sharing is not active yet.", color = Muted, fontSize = 11.sp)
             } else {
-                OutlinedButton(onClick = onVpnSetup, modifier = Modifier.fillMaxWidth()) { Text("Connect WireGuard VPN") }
-                Text("Import a trusted WireGuard .conf file to connect. NetSwap friend-to-friend sharing is still under development.", color = Muted, fontSize = 11.sp)
+                Text("NetSwap VPN permission is requested automatically when you start an approved peer tunnel.", color = Muted, fontSize = 11.sp)
             }
             if (showSend) {
                 Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
