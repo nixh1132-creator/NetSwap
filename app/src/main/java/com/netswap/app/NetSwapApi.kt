@@ -218,5 +218,14 @@ object NetSwapApi {
         }
     }
 
+    /** Atomically reports provider-measured bytes; server caps the grant and marks it completed. */
+    fun recordTrafficUsage(session: AuthSession, requestId: String, bytes: Long): Long {
+        require(bytes in 1..64L * 1024L * 1024L) { "Usage report must be between 1 byte and 64 MiB." }
+        val rows = JSONArray(call("/rest/v1/rpc/record_netswap_usage", "POST", session.accessToken,
+            JSONObject().put("p_request_id", requestId).put("p_bytes", bytes)))
+        require(rows.length() == 1) { "Server did not confirm the usage report." }
+        return rows.getJSONObject(0).getLong("used_bytes")
+    }
+
     private fun enc(value: String) = URLEncoder.encode(value, "UTF-8")
 }
