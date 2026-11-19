@@ -148,7 +148,7 @@ class NetSwapPeerProxyService : VpnService() {
             // entered receives the request and is the cellular-data provider.
             if (session.userId == request.receiverId) {
                 val network = CellularUpstreamNetwork.find(this)
-                    ?: error("Provider phone needs an active cellular internet connection.")
+                    ?: error("Provider phone needs an active internet connection (mobile data, Wi-Fi, or hotspot).")
                 val quota = SessionTrafficQuota(request.quotaBytes)
                 val senderEndpoint = PeerStreamSocketEndpoint(
                     vpnService = this,
