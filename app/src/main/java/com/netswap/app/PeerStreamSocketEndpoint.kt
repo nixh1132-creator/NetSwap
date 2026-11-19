@@ -148,18 +148,40 @@ class PeerStreamSocketEndpoint(
     private fun decodeDestination(payload: ByteArray): InetSocketAddress {
         require(payload.isNotEmpty()) { "Missing TCP destination." }
         val atyp = payload[0].toInt() and 0xff
-        val addressLength = when (atyp) {
-            1 -> 4
-            4 -> 16
-            else -> throw IllegalArgumentException("Only numeric IPv4/IPv6 destinations are supported.")
-        }
-        require(payload.size == 1 + addressLength + 2) { "Invalid TCP destination encoding." }
-        val addressBytes = payload.copyOfRange(1, 1 + addressLength)
         val port = ((payload[payload.size - 2].toInt() and 0xff) shl 8) or
             (payload[payload.size - 1].toInt() and 0xff)
         require(port in 1..65535) { "Invalid TCP destination port." }
-        return InetSocketAddress(InetAddress.getByAddress(addressBytes), port)
+        val address = when (atyp) {
+            1 -> {
+                require(payload.size == 1 + 4 + 2) { "Invalid IPv4 destination encoding." }
+                InetAddress.getByAddress(payload.copyOfRange(1, 5))
+            }
+            4 -> {
+                require(payload.size == 1 + 16 + 2) { "Invalid IPv6 destination encoding." }
+                InetAddress.getByAddress(payload.copyOfRange(1, 17))
+            }
+            3 -> {
+                require(payload.size >= 4) { "Invalid domain destination encoding." }
+                val length = payload[1].toInt() and 0xff
+                require(length in 1..253 && payload.size == 1 + 1 + length + 2) {
+                    "Invalid domain destination encoding."
+                }
+                val host = payload.copyOfRange(2, 2 + length).toString(Charsets.US_ASCII)
+                require(host.isNotBlank() && host.all { it.code in 33..126 }) { "Invalid destination hostname." }
+                val resolved = upstreamNetwork?.getAllByName(host) ?: InetAddress.getAllByName(host)
+                resolved.firstOrNull(::isPublicInternetAddress)
+                    ?: throw IllegalArgumentException("Destination did not resolve to a public internet address.")
+            }
+            else -> throw IllegalArgumentException("Unsupported TCP destination type.")
+        }
+        require(isPublicInternetAddress(address)) { "Private or local network destinations are blocked." }
+        return InetSocketAddress(address, port)
     }
+
+    private fun isPublicInternetAddress(address: InetAddress): Boolean =
+        !address.isAnyLocalAddress && !address.isLoopbackAddress &&
+            !address.isLinkLocalAddress && !address.isSiteLocalAddress &&
+            !address.isMulticastAddress
 
     private class Stream {
         val closed = AtomicBoolean(false)
