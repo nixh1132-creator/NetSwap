@@ -6,7 +6,8 @@ import java.nio.ByteOrder
 /**
  * Bounded binary framing for multiplexing proxy streams over one WebRTC DataChannel.
  *
- * This is a protocol codec only. It is not wired to the VPN/TUN path yet.
+ * The codec is consumed by PeerStreamTransportBridge and WebRtcSessionController
+ * to multiplex receiver-originated TCP and UDP proxy streams over the peer channel.
  */
 data class PeerStreamFrame(
     val type: Type,
