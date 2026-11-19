@@ -196,6 +196,7 @@ class NetSwapPeerProxyService : VpnService() {
         val runtime = HevTunnelRuntime(this)
         hevRuntime = runtime
         runtime.start(pair.hevDescriptor, "127.0.0.1", socksPort)
+        check(runtime.isRunning()) { "Hev packet tunnel did not stay running." }
         val androidDevice = AndroidTunPacketDevice.from(tun)
         val relay = HevTunPacketRelay(androidDevice, pair.packetDevice) { reason ->
             publish(false, "Packet tunnel stopped: ${reason.take(120)}")
