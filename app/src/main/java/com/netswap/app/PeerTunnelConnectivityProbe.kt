@@ -1,7 +1,6 @@
 package com.netswap.app
 
 import java.io.DataInputStream
-import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 
