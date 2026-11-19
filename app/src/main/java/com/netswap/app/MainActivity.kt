@@ -175,6 +175,7 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = lightColorScheme(background = Cream, surface = White, primary = Color(0xFF8274B8), onBackground = Ink, onSurface = Ink)) {
                 var session by remember { mutableStateOf(initial) }
                 var uid by remember { mutableStateOf("") }
+                var displayName by remember { mutableStateOf("") }
                 var requests by remember { mutableStateOf(emptyList<ShareRequest>()) }
                 var loading by remember { mutableStateOf(false) }
                 var message by remember { mutableStateOf("") }
@@ -192,10 +193,10 @@ class MainActivity : ComponentActivity() {
                         try {
                             val data = withContext(Dispatchers.IO) {
                                 val refreshed = if (s.accessToken.isBlank()) NetSwapApi.refresh(s.refreshToken) else s
-                                NetSwapApi.displayName(refreshed)
-                                Pair(refreshed, Pair(NetSwapApi.profileUid(refreshed), NetSwapApi.requests(refreshed)))
+                                val name = NetSwapApi.displayName(refreshed)
+                                Triple(refreshed, NetSwapApi.profileUid(refreshed), Pair(name, NetSwapApi.requests(refreshed)))
                             }
-                            saveSession(data.first); uid = data.second.first; requests = data.second.second
+                            saveSession(data.first); uid = data.second; displayName = data.third.first; requests = data.third.second
                         } catch (e: Exception) { message = e.message ?: "Could not load account data." }
                         loading = false
                     }
@@ -227,8 +228,10 @@ class MainActivity : ComponentActivity() {
                             }
                         })
                 } else {
-                    HomeScreen(session!!, uid, requests, loading, message,
+                    HomeScreen(session!!, uid, displayName, requests, loading, message,
                         onRefresh = { loadHome(session!!) },
+                        onSaveName = { name -> lifecycleScope.launch { loading = true; try { withContext(Dispatchers.IO) { NetSwapApi.updateDisplayName(session!!, name) }; displayName = name.trim(); message = "Username saved." } catch (e: Exception) { message = e.message ?: "Username save failed." }; loading = false } },
+                        onDelete = { request -> lifecycleScope.launch { loading = true; try { withContext(Dispatchers.IO) { NetSwapApi.deleteRequest(session!!, request.id) }; loadHome(session!!) } catch (e: Exception) { message = e.message ?: "Request delete failed."; loading = false } } },
                         vpnActive = vpnActive,
                         onVpnSetup = { startVpnWithNotificationPermission() },
                         onVpnDisconnect = { disconnectVpnService(); vpnActive = false },
@@ -295,11 +298,12 @@ private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,Strin
 }
 
 @Composable
-private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
-    vpnActive: Boolean, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
+private fun HomeScreen(session: AuthSession, uid: String, displayName: String, requests: List<ShareRequest>, loading: Boolean, message: String,
+    vpnActive: Boolean, onRefresh: () -> Unit, onSaveName: (String) -> Unit, onDelete: (ShareRequest) -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
     onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
     onStartTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
     var friendUid by remember { mutableStateOf("") }
+    var usernameInput by remember(displayName) { mutableStateOf(displayName) }
     var amountMb by remember { mutableStateOf("100") }
     var activeTab by remember { mutableStateOf("receive") }
     val incoming = requests.filter { it.receiverId == session.userId }
@@ -314,6 +318,14 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                 TextButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
             }
             Spacer(Modifier.height(12.dp))
+            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
+                Text(if (displayName.isBlank()) "Set your username to continue" else "Your username", fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(usernameInput, { usernameInput = it }, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (displayName.isBlank() || usernameInput.trim() != displayName) {
+                    Button(onClick = { onSaveName(usernameInput) }, enabled = !loading && usernameInput.trim().length in 2..24, modifier = Modifier.fillMaxWidth()) { Text("Save username") }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
             Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
                 Text("Your NetSwap ID", color = Muted, fontSize = 12.sp)
                 Text(if (uid.isBlank()) "Loading…" else uid, color = Ink, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -354,7 +366,7 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                     }
                     val parsedMb = amountMb.toLongOrNull() ?: 0L
                     Button(onClick = { onSend(friendUid.trim(), parsedMb * 1024L * 1024L) },
-                        enabled = !loading && friendUid.startsWith("NS-") && friendUid.length >= 8 && parsedMb in 1..1048576,
+                        enabled = !loading && displayName.isNotBlank() && friendUid.startsWith("NS-") && friendUid.length >= 8 && parsedMb in 1..1048576,
                         modifier = Modifier.fillMaxWidth()) { Text(if (loading) "Sending…" else "Send data request") }
                     Text("UID daalo, data limit chuno aur request bhejo. Accept hone ke baad Join & connect dabao.", color = Muted, fontSize = 11.sp)
                 }
@@ -373,6 +385,7 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                                 Button(onClick = { onRespond(r, "approved") }, modifier = Modifier.weight(1f)) { Text("Accept") }
                                 OutlinedButton(onClick = { onRespond(r, "rejected") }, modifier = Modifier.weight(1f)) { Text("Reject") }
                             }
+                            if (r.status in listOf("rejected", "cancelled")) TextButton(onClick = { onDelete(r) }, enabled = !loading) { Text("Delete request") }
                             if (r.status == "approved") {
                                 Text("Request accepted", color = Color(0xFF3E725B), fontSize = 12.sp)
                                 OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start sharing") }
@@ -393,6 +406,7 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                                 OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Join & connect") }
                             }
                             if (r.status in listOf("pending", "approved")) TextButton(onClick = { onRespond(r, "cancelled") }) { Text("Cancel request") }
+                            if (r.status in listOf("rejected", "cancelled")) TextButton(onClick = { onDelete(r) }, enabled = !loading) { Text("Delete request") }
                         }
                     }
                 }
