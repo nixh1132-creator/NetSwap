@@ -32,6 +32,8 @@ class WebRtcSessionController(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val closed = AtomicBoolean(false)
     private val seenSignals = Collections.synchronizedSet(mutableSetOf<String>())
+    private val offerHandled = AtomicBoolean(false)
+    private val answerHandled = AtomicBoolean(false)
     private val peerUserId = if (session.userId == request.senderId) request.receiverId else request.senderId
     private val isOfferer = session.userId == request.senderId
     private var link: WebRtcPeerLink? = null
@@ -131,13 +133,13 @@ class WebRtcSessionController(
                         incoming.forEach { signal ->
                             if (signal.fromUserId != peerUserId || !seenSignals.add(signal.id)) return@forEach
                             when (signal.type) {
-                                "offer" -> if (!isOfferer) {
+                                "offer" -> if (!isOfferer && offerHandled.compareAndSet(false, true)) {
                                     val sdp = signal.payload.optString("sdp")
                                     if (sdp.isNotBlank()) peerLink.acceptOffer(sdp).whenComplete { _, error ->
                                         if (error != null) onError(error.message ?: "Could not accept peer offer.")
                                     }
                                 }
-                                "answer" -> if (isOfferer) {
+                                "answer" -> if (isOfferer && answerHandled.compareAndSet(false, true)) {
                                     val sdp = signal.payload.optString("sdp")
                                     if (sdp.isNotBlank()) peerLink.acceptAnswer(sdp).whenComplete { _, error ->
                                         if (error != null) onError(error.message ?: "Could not accept peer answer.")
