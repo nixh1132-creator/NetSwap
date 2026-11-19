@@ -68,9 +68,23 @@ class NetSwapPeerProxyService : VpnService() {
             val access = prefs.getString("access_token", "") ?: ""
             val userId = prefs.getString("user_id", null) ?: error("Please log in again.")
             val email = prefs.getString("email", "") ?: ""
-            val session = if (access.isBlank()) NetSwapApi.refresh(refresh)
-                else runCatching { AuthSession(access, refresh, userId, email) }.getOrElse { NetSwapApi.refresh(refresh) }
-            val request = NetSwapApi.requests(session).firstOrNull {
+            val initial = if (access.isBlank()) NetSwapApi.refresh(refresh)
+                else AuthSession(access, refresh, userId, email)
+            val requestList = try {
+                NetSwapApi.requests(initial)
+            } catch (_: Exception) {
+                val refreshed = NetSwapApi.refresh(refresh)
+                prefs.edit().putString("access_token", refreshed.accessToken)
+                    .putString("refresh_token", refreshed.refreshToken).apply()
+                NetSwapApi.requests(refreshed)
+            }
+            val session = if (access.isBlank()) {
+                val refreshed = NetSwapApi.refresh(refresh)
+                prefs.edit().putString("access_token", refreshed.accessToken)
+                    .putString("refresh_token", refreshed.refreshToken).apply()
+                refreshed
+            } else initial
+            val request = requestList.firstOrNull {
                 it.id == requestId && it.status == "approved" &&
                     (it.senderId == session.userId || it.receiverId == session.userId)
             } ?: error("Approved sharing request not found. Refresh the request list.")
