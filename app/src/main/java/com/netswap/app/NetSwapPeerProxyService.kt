@@ -148,6 +148,11 @@ class NetSwapPeerProxyService : VpnService() {
                 val info = receiverProxy.start()
                 peerController.start()
                 check(peerConnected.await(45, TimeUnit.SECONDS)) { "Peer did not connect within 45 seconds. VPN route was not installed." }
+                val channelDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+                while (!peerController.isDataChannelOpen() && System.nanoTime() < channelDeadline && !stopped.get()) {
+                    Thread.sleep(200)
+                }
+                check(peerController.isDataChannelOpen()) { "Peer connected, but secure data channel did not open. VPN route was not installed." }
                 startReceiverDeviceTunnel(info.port)
                 publish(true, "NetSwap device-wide IPv4 forwarding is active.")
             }
