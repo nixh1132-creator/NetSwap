@@ -51,7 +51,8 @@ Do not treat an approved request, registered keys, installed hub peers, or a run
 - [ ] Complete the sender TUN-to-SOCKS packet bridge and return path.
 - [ ] Provision a reachable, eligible free relay endpoint (no paid resources without explicit approval).
 - [ ] Securely provision per-session relay peers and verify a WireGuard handshake.
-- [ ] Enforce quotas and revocation in the actual forwarding path.
+- [x] Add atomic authenticated provider usage reporting with server-side quota capping; local per-packet quota remains the immediate data-plane gate.
+- [ ] Move authoritative accounting/cutoff into the gateway forwarding path and verify hard cutoff across disconnects/restarts.
 - [ ] Test TCP, UDP, DNS, quota exhaustion, disconnect, sleep/wake, and network changes on two physical Android devices.
 
 ## Important constraints
