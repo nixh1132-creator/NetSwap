@@ -64,7 +64,11 @@ class NetSwapPeerProxyService : VpnService() {
         }
         startForeground(NOTIFICATION_ID, notification("Connecting to approved NetSwap peer…"))
         worker.execute { startPeer(requestId) }
-        return START_NOT_STICKY
+        // If Android reclaims the process while the user has deliberately left
+        // NetSwap running in the foreground, ask the system to redeliver the
+        // original approved-session request. A normal app task swipe must not
+        // be treated as an explicit disconnect.
+        return START_REDELIVER_INTENT
     }
 
     private fun startPeer(requestId: String) {
