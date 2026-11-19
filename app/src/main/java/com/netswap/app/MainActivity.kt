@@ -108,6 +108,8 @@ class MainActivity : ComponentActivity() {
 
     private fun disconnectVpnService() {
         startService(Intent(this, NetSwapVpnService::class.java).setAction(NetSwapVpnService.ACTION_STOP))
+        startService(Intent(this, NetSwapPeerProxyService::class.java).setAction(NetSwapPeerProxyService.ACTION_STOP))
+        startService(Intent(this, NetSwapUserspaceVpnService::class.java).setAction(NetSwapUserspaceVpnService.ACTION_STOP))
         vpnState.value = false
         prefs.edit().putBoolean("vpn_active", false).apply()
     }
@@ -128,10 +130,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchUserspaceVpn(id: String, key: String) {
-        val intent = Intent(this, NetSwapUserspaceVpnService::class.java)
-            .setAction(NetSwapUserspaceVpnService.ACTION_START)
-            .putExtra(NetSwapUserspaceVpnService.EXTRA_REQUEST_ID, id)
-            .putExtra(NetSwapUserspaceVpnService.EXTRA_LOCAL_PUBLIC_KEY, key)
+        val intent = Intent(this, NetSwapPeerProxyService::class.java)
+            .setAction(NetSwapPeerProxyService.ACTION_START)
+            .putExtra(NetSwapPeerProxyService.EXTRA_REQUEST_ID, id)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
     }
 
