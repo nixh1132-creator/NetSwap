@@ -39,6 +39,7 @@ class WebRtcSessionController(
     private var factory: PeerConnectionFactory? = null
     private var pollJob: Job? = null
     @Volatile private var socketEndpoint: PeerStreamSocketEndpoint? = null
+    @Volatile private var datagramEndpoint: PeerStreamDatagramEndpoint? = null
     @Volatile private var receiverProxy: ReceiverSocks5Proxy? = null
 
     fun start() {
@@ -75,24 +76,26 @@ class WebRtcSessionController(
             val bridge = PeerStreamTransportBridge(
                 sendBinary = { bytes -> peerLink.send(bytes) },
                 onOpen = { streamId, protocol, destination ->
-                    if (protocol != PeerStreamRouter.Protocol.TCP) {
-                        bridgeError(streamId, "UDP forwarding is not enabled yet.")
-                        false
-                    } else {
-                        socketEndpoint?.openTcp(streamId, destination) == true
+                    when (protocol) {
+                        PeerStreamRouter.Protocol.TCP -> socketEndpoint?.openTcp(streamId, destination) == true
+                        PeerStreamRouter.Protocol.UDP -> datagramEndpoint?.openUdp(streamId, destination) == true
                     }
                 },
                 onData = { streamId, protocol, payload ->
-                    if (protocol == PeerStreamRouter.Protocol.TCP) {
-                        val receiver = receiverProxy
-                        if (receiver != null) receiver.onPeerData(streamId, payload)
-                        else if (socketEndpoint?.writeTcp(streamId, payload) != true) {
-                            bridgeError(streamId, "TCP stream write failed.")
+                    when (protocol) {
+                        PeerStreamRouter.Protocol.TCP -> {
+                            val receiver = receiverProxy
+                            if (receiver != null) receiver.onPeerData(streamId, payload)
+                            else if (socketEndpoint?.writeTcp(streamId, payload) != true) bridgeError(streamId, "TCP stream write failed.")
+                        }
+                        PeerStreamRouter.Protocol.UDP -> {
+                            if (datagramEndpoint?.sendUdp(streamId, payload) != true) bridgeError(streamId, "UDP datagram send failed.")
                         }
                     }
                 },
                 onClose = { streamId ->
                     socketEndpoint?.closeStream(streamId)
+                    datagramEndpoint?.closeStream(streamId)
                     receiverProxy?.onPeerError(streamId)
                 }
             )
@@ -148,6 +151,13 @@ class WebRtcSessionController(
         socketEndpoint = endpoint
     }
 
+    /** Attach the sender-side protected UDP endpoint before accepting UDP streams. */
+    fun attachDatagramEndpoint(endpoint: PeerStreamDatagramEndpoint) {
+        check(!closed.get()) { "Peer session is closed." }
+        datagramEndpoint?.close()
+        datagramEndpoint = endpoint
+    }
+
     /** Attach the receiver's loopback SOCKS adapter after the peer data channel is ready. */
     fun attachReceiverProxy(proxy: ReceiverSocks5Proxy) {
         check(!closed.get()) { "Peer session is closed." }
@@ -188,6 +198,8 @@ class WebRtcSessionController(
         streamBridge = null
         socketEndpoint?.close()
         socketEndpoint = null
+        datagramEndpoint?.close()
+        datagramEndpoint = null
         receiverProxy?.close()
         receiverProxy = null
         link?.close()
