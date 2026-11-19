@@ -156,7 +156,7 @@ class ReceiverSocks5Proxy(
 
 
     private fun handleUdpAssociate(control: Socket, input: DataInputStream, output: DataOutputStream, atyp: Int) {
-        val rawAddress = when (atyp) {
+        when (atyp) {
             1 -> ByteArray(4).also(input::readFully)
             4 -> ByteArray(16).also(input::readFully)
             3 -> ByteArray(input.readUnsignedByte()).also(input::readFully).also {
