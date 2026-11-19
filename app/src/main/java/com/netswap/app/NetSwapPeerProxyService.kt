@@ -152,9 +152,9 @@ class NetSwapPeerProxyService : VpnService() {
                     ?: error("Provider phone needs an active internet connection (mobile data, Wi-Fi, or hotspot).")
                 val quota = SessionTrafficQuota(request.quotaBytes)
                 // Local quota gates every payload; authenticated byte deltas are persisted in batches.
-                usageReporter = SessionUsageReporter(quota) { bytes ->
+                usageReporter = SessionUsageReporter(quota, reportUsage = { bytes ->
                     NetSwapApi.recordTrafficUsage(session, request.id, bytes)
-                }.start()
+                }).start()
                 val senderEndpoint = PeerStreamSocketEndpoint(
                     vpnService = this,
                     upstreamNetwork = network,
