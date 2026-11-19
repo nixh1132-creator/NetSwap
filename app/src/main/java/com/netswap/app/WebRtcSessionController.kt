@@ -59,9 +59,16 @@ class WebRtcSessionController(
                     val item = iceJson.getJSONObject(index)
                     val username = item.optString("username")
                     val credential = item.optString("credential")
-                    val urls = item.optJSONArray("urls") ?: continue
-                    for (urlIndex in 0 until urls.length()) {
-                        val url = urls.optString(urlIndex).takeIf { it.isNotBlank() } ?: continue
+                    // TURN providers may return one URL as a string or several as an array.
+                    // Accept both shapes; otherwise a valid TURN response can be silently discarded.
+                    val rawUrls = item.opt("urls")
+                    val urls = when (rawUrls) {
+                        is String -> listOf(rawUrls)
+                        is org.json.JSONArray -> (0 until rawUrls.length()).map { rawUrls.optString(it) }
+                        else -> emptyList()
+                    }
+                    for (url in urls) {
+                        if (url.isBlank()) continue
                         val builder = PeerConnection.IceServer.builder(url)
                         if (username.isNotBlank() && credential.isNotBlank()) {
                             builder.setUsername(username).setPassword(credential)
