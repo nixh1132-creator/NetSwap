@@ -21,14 +21,19 @@ class PeerStreamTransportBridgeTest {
             onClose = { closed.add(it) }
         )
 
+        // Stream 9 is opened locally; only peer DATA/CLOSE should return on it.
         assertTrue(bridge.openTcp(9, byteArrayOf(8, 0, 1)))
         assertEquals(PeerStreamFrame.Type.OPEN_TCP, PeerStreamFrame.decode(sent.last()).type)
-        assertTrue(bridge.receive(PeerStreamFrame(PeerStreamFrame.Type.OPEN_TCP, 9, byteArrayOf(8, 0, 1)).encode()))
         assertTrue(bridge.receive(PeerStreamFrame(PeerStreamFrame.Type.DATA, 9, byteArrayOf(4, 5)).encode()))
         assertTrue(bridge.receive(PeerStreamFrame(PeerStreamFrame.Type.CLOSE, 9).encode()))
-        assertEquals(listOf(9), opened)
+
+        // Stream 10 is opened by the peer and is accepted through the remote OPEN path.
+        assertTrue(bridge.receive(PeerStreamFrame(PeerStreamFrame.Type.OPEN_TCP, 10, byteArrayOf(8, 0, 1)).encode()))
+        assertTrue(bridge.receive(PeerStreamFrame(PeerStreamFrame.Type.DATA, 10, byteArrayOf(6)).encode()))
+        assertTrue(bridge.receive(PeerStreamFrame(PeerStreamFrame.Type.CLOSE, 10).encode()))
+        assertEquals(listOf(10), opened)
         assertEquals(listOf<Byte>(4, 5), received)
-        assertEquals(listOf(9), closed)
+        assertEquals(listOf(9, 10), closed)
         bridge.close()
     }
 
