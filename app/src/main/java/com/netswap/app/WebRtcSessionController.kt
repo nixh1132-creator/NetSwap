@@ -70,7 +70,8 @@ class WebRtcSessionController(
                     incomingBridge?.receive(bytes)
                     onMessage(bytes)
                 },
-                onError = onError
+                onError = onError,
+                createDataChannel = isOfferer
             )
             link = peerLink
             val bridge = PeerStreamTransportBridge(
