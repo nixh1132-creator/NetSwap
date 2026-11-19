@@ -16,11 +16,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Receiver-side localhost SOCKS5 CONNECT adapter for the NSWP TCP stream.
+ * Receiver-side localhost SOCKS5 proxy for TCP CONNECT and UDP ASSOCIATE.
  *
- * This is an app-level proxy (not yet a device-wide VPN/TUN adapter). It binds
- * only to 127.0.0.1, resolves hostnames on the receiver, and sends numeric
- * destinations through the authenticated peer data channel.
+ * It binds only to 127.0.0.1. Domain destinations are preserved in NSWP frames
+ * so the provider resolves them using its selected upstream network.
  */
 class ReceiverSocks5Proxy(
     private val openTcp: (Int, ByteArray) -> Boolean,
@@ -78,14 +77,19 @@ class ReceiverSocks5Proxy(
     fun onPeerUdpData(streamId: Int, payload: ByteArray) {
         val target = udpStreams[streamId] ?: return
         val socket = udpSockets[target.associationId] ?: return
-        val addr = target.address.address
-        val header = byteArrayOf(0, 0, 0, if (addr.size == 4) 1 else 4) + addr + byteArrayOf((target.port shr 8).toByte(), target.port.toByte())
+        val atypHeader = if (target.atyp == 3) byteArrayOf(3, target.addressBytes.size.toByte())
+            else byteArrayOf(target.atyp.toByte())
+        val header = byteArrayOf(0, 0, 0) + atypHeader + target.addressBytes +
+            byteArrayOf((target.port shr 8).toByte(), target.port.toByte())
         val bytes = header + payload
         runCatching { socket.send(DatagramPacket(bytes, bytes.size, target.client)) }
     }
 
     /** Called when the remote endpoint reports an asynchronous connect/stream error. */
-    fun onPeerError(streamId: Int) = closeLocal(streamId, notifyPeer = false)
+    fun onPeerError(streamId: Int) {
+        closeLocal(streamId, notifyPeer = false)
+        udpStreams.remove(streamId)
+    }
 
     private fun handle(socket: Socket) {
         var streamId = 0
@@ -155,7 +159,9 @@ class ReceiverSocks5Proxy(
         val rawAddress = when (atyp) {
             1 -> ByteArray(4).also(input::readFully)
             4 -> ByteArray(16).also(input::readFully)
-            3 -> ByteArray(input.readUnsignedByte()).also(input::readFully)
+            3 -> ByteArray(input.readUnsignedByte()).also(input::readFully).also {
+                require(it.size in 1..253) { "Invalid UDP association hostname." }
+            }
             else -> { reply(output, 8); return }
         }
         input.readUnsignedShort() // requested UDP port; client endpoint is learned from first datagram
@@ -168,6 +174,16 @@ class ReceiverSocks5Proxy(
         udpSockets[associationId] = udp
         var client: InetSocketAddress? = null
         control.soTimeout = 0
+        // RFC 1928 requires the TCP control connection to remain open. A remote
+        // FIN does not set Socket.isClosed, so monitor EOF and close the UDP relay.
+        Thread({
+            try {
+                while (!control.isClosed && control.getInputStream().read() != -1) { }
+            } catch (_: IOException) {
+            } finally {
+                runCatching { udp.close() }
+            }
+        }, "netswap-socks-udp-control").apply { isDaemon = true; start() }
         val buffer = ByteArray(65507)
         try {
             while (!closed.get() && !control.isClosed) {
@@ -182,17 +198,22 @@ class ReceiverSocks5Proxy(
                 val len = when (type) { 1 -> 4; 4 -> 16; 3 -> if (bytes.size > 4) bytes[4].toInt() and 255 else 0; else -> 0 }
                 val offset = if (type == 3) 5 else 4
                 if (len !in 1..253 || bytes.size < offset + len + 2) continue
-                val address = if (type == 3) InetAddress.getByName(bytes.copyOfRange(offset, offset + len).toString(Charsets.US_ASCII)) else InetAddress.getByAddress(bytes.copyOfRange(offset, offset + len))
+                val addressBytes = bytes.copyOfRange(offset, offset + len)
+                if (type == 3 && !addressBytes.all { (it.toInt() and 0xff) in 33..126 }) continue
                 val portOffset = offset + len
                 val port = ((bytes[portOffset].toInt() and 255) shl 8) or (bytes[portOffset + 1].toInt() and 255)
                 if (port == 0) continue
-                val key = (address.hostAddress ?: continue) + ":" + port
+                val hostKey = if (type == 3) addressBytes.toString(Charsets.US_ASCII).lowercase()
+                    else InetAddress.getByAddress(addressBytes).hostAddress ?: continue
+                val key = "$type:$hostKey:$port"
                 var streamId = udpStreams.entries.firstOrNull { it.value.associationId == associationId && it.value.key == key }?.key
                 if (streamId == null) {
                     streamId = allocateId()
-                    val target = UdpTarget(associationId, client, address, port, key)
+                    val target = UdpTarget(associationId, client, type, addressBytes, port, key)
                     udpStreams[streamId] = target
-                    val destination = byteArrayOf(if (address.address.size == 4) 1 else 4) + address.address + byteArrayOf((port shr 8).toByte(), port.toByte())
+                    val destinationAddress = if (type == 3) byteArrayOf(3, len.toByte()) + addressBytes
+                        else byteArrayOf(type.toByte()) + addressBytes
+                    val destination = destinationAddress + byteArrayOf((port shr 8).toByte(), port.toByte())
                     if (!openUdp(streamId, destination)) { udpStreams.remove(streamId); continue }
                 }
                 val body = bytes.copyOfRange(portOffset + 2, bytes.size)
@@ -205,7 +226,14 @@ class ReceiverSocks5Proxy(
         }
     }
 
-    private data class UdpTarget(val associationId: Int, val client: InetSocketAddress, val address: InetAddress, val port: Int, val key: String)
+    private data class UdpTarget(
+        val associationId: Int,
+        val client: InetSocketAddress,
+        val atyp: Int,
+        val addressBytes: ByteArray,
+        val port: Int,
+        val key: String
+    )
 
     private fun reply(output: DataOutputStream, code: Int) {
         output.write(byteArrayOf(5, code.toByte(), 0, 1, 0, 0, 0, 0, 0, 0))
@@ -215,7 +243,7 @@ class ReceiverSocks5Proxy(
     private fun allocateId(): Int {
         repeat(Int.MAX_VALUE) {
             val id = nextId.getAndUpdate { if (it >= Int.MAX_VALUE - 1) 1 else it + 1 }
-            if (id > 0 && !clients.containsKey(id) && !udpStreams.containsKey(id)) return id
+            if (id > 0 && !clients.containsKey(id) && !udpStreams.containsKey(id) && !udpSockets.containsKey(id)) return id
         }
         throw IOException("No peer stream identifiers available.")
     }
