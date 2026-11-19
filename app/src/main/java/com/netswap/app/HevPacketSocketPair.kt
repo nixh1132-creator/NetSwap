@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * userspace packet pipeline without giving two readers the Android VPN TUN fd.
  *
  * Hev owns [hevDescriptor] while running. NetSwap owns [packetDevice].
- * Stop Hev before closing this pair. This primitive is not wired into a live
- * session until the native Hev start/stop wrapper and end-to-end tests exist.
+ * Stop Hev before closing this pair. NetSwapPeerProxyService connects the pair
+ * to Android's TUN using HevTunPacketRelay and HevTunnelRuntime.
  */
 class HevPacketSocketPair private constructor(
     val hevDescriptor: ParcelFileDescriptor,
