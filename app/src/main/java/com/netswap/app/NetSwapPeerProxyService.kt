@@ -70,6 +70,10 @@ class NetSwapPeerProxyService : VpnService() {
             val email = prefs.getString("email", "") ?: ""
             var session = if (access.isBlank()) NetSwapApi.refresh(refresh)
                 else AuthSession(access, refresh, userId, email)
+            if (access.isBlank()) {
+                prefs.edit().putString("access_token", session.accessToken)
+                    .putString("refresh_token", session.refreshToken).apply()
+            }
             val requestList = try {
                 NetSwapApi.requests(session)
             } catch (_: Exception) {
