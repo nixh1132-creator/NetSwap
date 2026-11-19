@@ -52,7 +52,7 @@ class HevTunnelRuntime(
             socks5:
               address: $socksHost
               port: $socksPort
-              udp: 'tcp'
+              udp: 'udp'
             misc:
               task-stack-size: 86016
               tcp-buffer-size: 65536
