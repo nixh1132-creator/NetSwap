@@ -58,16 +58,18 @@ object NetSwapApi {
         return AuthSession(j.getString("access_token"), j.optString("refresh_token", refreshToken), u.getString("id"), u.optString("email", ""))
     }
 
-    fun ensureDisplayName(session: AuthSession) {
+    fun displayName(session: AuthSession): String {
         val raw = call("/rest/v1/profiles?select=display_name&id=eq." + enc(session.userId), "GET", session.accessToken)
         val rows = JSONArray(raw)
-        val existing = if (rows.length() > 0) rows.getJSONObject(0).optString("display_name") else ""
-        if (existing.isBlank()) {
-            val suggested = session.email.substringBefore("@").replace(Regex("[._-]+"), " ").trim()
-                .ifBlank { "NetSwap user" }.take(40)
-            call("/rest/v1/profiles?id=eq." + enc(session.userId), "PATCH", session.accessToken,
-                JSONObject().put("display_name", suggested), "return=minimal")
-        }
+        return if (rows.length() > 0) rows.getJSONObject(0).optString("display_name").trim() else ""
+    }
+
+    fun updateDisplayName(session: AuthSession, name: String) {
+        val clean = name.trim()
+        require(clean.length in 2..24) { "Username 2 se 24 characters ka hona chahiye." }
+        require(clean.matches(Regex("[A-Za-z0-9_ ]+"))) { "Username mein letters, numbers, space aur underscore hi use karo." }
+        call("/rest/v1/profiles?id=eq." + enc(session.userId), "PATCH", session.accessToken,
+            JSONObject().put("display_name", clean), "return=minimal")
     }
 
     fun profileUid(session: AuthSession): String {
@@ -89,6 +91,10 @@ object NetSwapApi {
         call("/rest/v1/sharing_requests", "POST", session.accessToken,
             JSONObject().put("sender_id", session.userId).put("receiver_id", receiverId).put("quota_bytes", quotaBytes),
             "return=minimal")
+    }
+
+    fun deleteRequest(session: AuthSession, requestId: String) {
+        call("/rest/v1/sharing_requests?id=eq." + enc(requestId), "DELETE", session.accessToken, prefer = "return=minimal")
     }
 
     fun requests(session: AuthSession): List<ShareRequest> {
