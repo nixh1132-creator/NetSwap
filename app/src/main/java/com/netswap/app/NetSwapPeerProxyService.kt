@@ -169,6 +169,8 @@ class NetSwapPeerProxyService : VpnService() {
             .setMtu(1400)
             .addAddress("198.18.0.2", 32)
             .addRoute("0.0.0.0", 0)
+            .addAddress("fc00::2", 128)
+            .addRoute("::", 0)
             .addDnsServer("1.1.1.1")
             .addDisallowedApplication(packageName)
             .establish() ?: error("Android could not establish receiver VPN interface.")
