@@ -45,7 +45,7 @@ internal object PeerTunnelConnectivityProbe {
                 input.readUnsignedShort() // bound port
 
                 output.write(
-                    "GET / HTTP/1.1\\r\\nHost: example.com\\r\\nConnection: close\\r\\nUser-Agent: NetSwap-Probe\\r\\n\\r\\n"
+                    "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\nUser-Agent: NetSwap-Probe\r\n\r\n"
                         .toByteArray(Charsets.US_ASCII)
                 )
                 output.flush()
