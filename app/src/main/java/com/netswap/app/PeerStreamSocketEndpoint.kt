@@ -15,9 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Sender-side TCP endpoint for NSWP peer streams.
  *
- * OPEN_TCP payload format: SOCKS-style numeric address:
- * ATYP(1=IPv4, 4=IPv6) + address bytes + big-endian port(2).
- * Domain names are intentionally rejected to avoid remote DNS ambiguity.
+ * OPEN_TCP payload format: SOCKS-style address:
+ * ATYP(1=IPv4, 4=IPv6, 3=domain) + address/hostname + big-endian port(2).
+ * Domain names are resolved using the provider's selected upstream Network.
  *
  * Each upstream socket is protected from the local VPN and optionally bound to
  * the sender's selected cellular Network. This endpoint is a TCP building block;
@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class PeerStreamSocketEndpoint(
     vpnService: VpnService,
-    upstreamNetwork: Network?,
+    private val upstreamNetwork: Network?,
     private val quota: SessionTrafficQuota,
     private val sendData: (streamId: Int, payload: ByteArray) -> Boolean,
     private val sendClose: (streamId: Int) -> Boolean,
