@@ -31,6 +31,8 @@ class NetSwapPeerProxyService : VpnService() {
 
     private val worker = Executors.newSingleThreadExecutor()
     private val stopped = AtomicBoolean(false)
+    private val startLock = Any()
+    @Volatile private var startingRequestId: String? = null
     @Volatile private var controller: WebRtcSessionController? = null
     @Volatile private var endpoint: PeerStreamSocketEndpoint? = null
     @Volatile private var proxy: ReceiverSocks5Proxy? = null
@@ -58,12 +60,33 @@ class NetSwapPeerProxyService : VpnService() {
             return START_NOT_STICKY
         }
         val requestId = intent?.getStringExtra(EXTRA_REQUEST_ID)
-        if (requestId.isNullOrBlank() || controller != null) {
-            if (requestId.isNullOrBlank()) stopSelf()
+        if (requestId.isNullOrBlank()) {
+            stopSelf()
             return START_NOT_STICKY
         }
+        // Reserve the start slot before queuing work. The controller is created
+        // asynchronously, so checking only controller != null allowed duplicate
+        // start intents to enqueue parallel setup attempts.
+        val accepted = synchronized(startLock) {
+            if (controller != null || startingRequestId != null || stopped.get()) {
+                false
+            } else {
+                startingRequestId = requestId
+                true
+            }
+        }
+        if (!accepted) return START_NOT_STICKY
+
         startForeground(NOTIFICATION_ID, notification("Connecting to approved NetSwap peer…"))
-        worker.execute { startPeer(requestId) }
+        worker.execute {
+            try {
+                startPeer(requestId)
+            } finally {
+                synchronized(startLock) {
+                    if (startingRequestId == requestId) startingRequestId = null
+                }
+            }
+        }
         // If Android reclaims the process while the user has deliberately left
         // NetSwap running in the foreground, ask the system to redeliver the
         // original approved-session request. A normal app task swipe must not
@@ -73,6 +96,7 @@ class NetSwapPeerProxyService : VpnService() {
 
     private fun startPeer(requestId: String) {
         try {
+            check(!stopped.get()) { "Connection cancelled." }
             val prefs = getSharedPreferences("netswap_session", MODE_PRIVATE)
             val refresh = prefs.getString("refresh_token", null) ?: error("Please log in again.")
             val access = prefs.getString("access_token", "") ?: ""
