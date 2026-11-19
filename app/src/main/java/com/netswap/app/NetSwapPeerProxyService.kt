@@ -153,9 +153,10 @@ class NetSwapPeerProxyService : VpnService() {
                     Thread.sleep(200)
                 }
                 check(peerController.isDataChannelOpen()) { "Peer connected, but secure data channel did not open. VPN route was not installed." }
-                // A relay candidate proves the TURN server accepted credentials and allocated a relay address.
-                val turnDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12)
-                while (!peerController.hasTurnRelayCandidate() && System.nanoTime() < turnDeadline && !stopped.get()) {
+                // Wait for ICE gathering to finish before deciding whether TURN allocated a relay.
+                // A short fixed delay can falsely report unverified on slow mobile networks.
+                val iceDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+                while (!peerController.isIceGatheringComplete() && System.nanoTime() < iceDeadline && !stopped.get()) {
                     Thread.sleep(200)
                 }
                 startReceiverDeviceTunnel(info.port)
