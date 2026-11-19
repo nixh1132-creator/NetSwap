@@ -8,12 +8,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Owns the JNI lifecycle for the pinned Hev SOCKS5 tunnel engine.
- * This is deliberately not started automatically until a caller has a
- * validated SOCKS5 endpoint and a packet-device relay attached.
+ * Uses the upstream-compatible Java static JNI binding in hev.htproxy.TProxyService.
  */
 class HevTunnelRuntime(
-    private val context: Context,
-    private val service: hev.htproxy.TProxyService = hev.htproxy.TProxyService()
+    private val context: Context
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private var descriptor: ParcelFileDescriptor? = null
@@ -52,7 +50,7 @@ class HevTunnelRuntime(
         )
         val owned = ParcelFileDescriptor.dup(packetDescriptor.fileDescriptor)
         val ok = try {
-            service.TProxyStartService(config.absolutePath, owned.fd)
+            hev.htproxy.TProxyService.TProxyStartService(config.absolutePath, owned.fd)
         } catch (failure: Exception) {
             owned.close()
             throw failure
@@ -66,14 +64,14 @@ class HevTunnelRuntime(
         return true
     }
 
-    fun isRunning(): Boolean = !closed.get() && started && service.TProxyIsRunning()
+    fun isRunning(): Boolean = !closed.get() && started && hev.htproxy.TProxyService.TProxyIsRunning()
 
-    fun stats(): LongArray = if (isRunning()) service.TProxyGetStats() else longArrayOf(0, 0, 0, 0)
+    fun stats(): LongArray = if (isRunning()) hev.htproxy.TProxyService.TProxyGetStats() else longArrayOf(0, 0, 0, 0)
 
     @Synchronized
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        if (started) runCatching { service.TProxyStopService() }
+        if (started) runCatching { hev.htproxy.TProxyService.TProxyStopService() }
         started = false
         runCatching { descriptor?.close() }
         descriptor = null
