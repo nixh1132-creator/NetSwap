@@ -131,7 +131,9 @@ class NetSwapPeerProxyService : VpnService() {
                 val receiverProxy = ReceiverSocks5Proxy(
                     openTcp = { id, destination -> peerController.openTcp(id, destination) },
                     sendData = { id, bytes -> peerController.sendTcpData(id, bytes) },
-                    closePeerStream = { id -> peerController.closeStream(id) }
+                    closePeerStream = { id -> peerController.closeStream(id) },
+                    openUdp = { id, destination -> peerController.openUdp(id, destination) },
+                    sendUdpData = { id, bytes -> peerController.sendUdpData(id, bytes) }
                 )
                 proxy = receiverProxy
                 peerController.attachReceiverProxy(receiverProxy)
