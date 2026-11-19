@@ -58,6 +58,18 @@ object NetSwapApi {
         return AuthSession(j.getString("access_token"), j.optString("refresh_token", refreshToken), u.getString("id"), u.optString("email", ""))
     }
 
+    fun ensureDisplayName(session: AuthSession) {
+        val raw = call("/rest/v1/profiles?select=display_name&id=eq." + enc(session.userId), "GET", session.accessToken)
+        val rows = JSONArray(raw)
+        val existing = if (rows.length() > 0) rows.getJSONObject(0).optString("display_name") else ""
+        if (existing.isBlank()) {
+            val suggested = session.email.substringBefore("@").replace(Regex("[._-]+"), " ").trim()
+                .ifBlank { "NetSwap user" }.take(40)
+            call("/rest/v1/profiles?id=eq." + enc(session.userId), "PATCH", session.accessToken,
+                JSONObject().put("display_name", suggested), "return=minimal")
+        }
+    }
+
     fun profileUid(session: AuthSession): String {
         val raw = call("/rest/v1/profiles?select=uid&id=eq." + enc(session.userId), "GET", session.accessToken)
         val rows = JSONArray(raw)
