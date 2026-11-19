@@ -40,9 +40,10 @@ class SessionUsageReporterTest {
         val reporter = SessionUsageReporter(quota, { bytes -> batches.add(bytes); batches.sum() })
         quota.record(TrafficDirection.SENT_TO_RECEIVER, 130L * 1024L * 1024L)
         reporter.flushNow()
-        assertEquals(2, batches.size)
+        assertEquals(3, batches.size)
         assertEquals(SessionUsageReporter.MAX_REPORT_BYTES, batches[0])
-        assertEquals(66L * 1024L * 1024L, batches[1])
+        assertEquals(SessionUsageReporter.MAX_REPORT_BYTES, batches[1])
+        assertEquals(2L * 1024L * 1024L, batches[2])
         reporter.close()
     }
 
