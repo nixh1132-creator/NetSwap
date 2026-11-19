@@ -113,5 +113,5 @@ class PeerStreamDatagramEndpoint(
         val closed: AtomicBoolean = AtomicBoolean(false)
     )
 
-    companion object { private const val MAX_DATAGRAM = 60 * 1024 }
+    companion object { private const val MAX_DATAGRAM = PeerStreamFrame.MAX_PAYLOAD_BYTES }
 }
