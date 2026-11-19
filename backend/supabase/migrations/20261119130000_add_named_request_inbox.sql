@@ -1,5 +1,21 @@
--- Return sharing requests with the other participant's public display name.
--- SECURITY DEFINER is scoped to the authenticated caller's own requests only.
+-- Allow participants to see only the public profile rows connected to their requests.
+create policy "Participants can read related NetSwap profiles"
+on public.profiles
+for select
+to authenticated
+using (
+  id = (select auth.uid())
+  or exists (
+    select 1
+    from public.sharing_requests r
+    where
+      (r.sender_id = (select auth.uid()) and r.receiver_id = profiles.id)
+      or
+      (r.receiver_id = (select auth.uid()) and r.sender_id = profiles.id)
+  )
+);
+
+-- List only the caller's own requests. SECURITY INVOKER preserves RLS.
 create or replace function public.list_netswap_requests()
 returns table (
   id uuid,
@@ -14,7 +30,7 @@ returns table (
 )
 language sql
 stable
-security definer
+security invoker
 set search_path = ''
 as $$
   select r.id, r.sender_id, r.receiver_id, r.quota_bytes, r.used_bytes,
