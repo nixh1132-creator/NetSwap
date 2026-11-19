@@ -48,6 +48,18 @@ class PeerStreamRouter(
         ids.forEach(onClose)
     }
 
+    /** Reserve a stream opened by this endpoint so peer-to-local DATA is accepted. */
+    @Synchronized
+    fun registerLocalStream(streamId: Int, protocol: Protocol): Boolean {
+        if (closed || streamId <= 0 || streams.size >= maxStreams || streams.containsKey(streamId)) return false
+        streams[streamId] = protocol
+        return true
+    }
+
+    /** Forget a locally initiated stream without invoking the remote-close callback. */
+    @Synchronized
+    fun forgetLocalStream(streamId: Int): Boolean = streams.remove(streamId) != null
+
     @Synchronized
     fun activeStreamCount(): Int = streams.size
 
