@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.net.VpnService
+import android.os.ParcelFileDescriptor
 import android.os.Build
 import android.os.IBinder
 import org.webrtc.PeerConnection
@@ -13,9 +14,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Starts the peer data channel for an approved request and exposes a loopback
- * SOCKS5 proxy on the receiver. This is app-level TCP proxying, not device-wide
- * VPN forwarding. No default route is installed.
+ * Starts the approved peer data channel. On the receiver, Android's IPv4 default
+ * route is piped through Hev into the local SOCKS5 proxy and then WebRTC.
  */
 class NetSwapPeerProxyService : VpnService() {
     companion object {
@@ -32,6 +32,10 @@ class NetSwapPeerProxyService : VpnService() {
     @Volatile private var controller: WebRtcSessionController? = null
     @Volatile private var endpoint: PeerStreamSocketEndpoint? = null
     @Volatile private var proxy: ReceiverSocks5Proxy? = null
+    @Volatile private var receiverTun: ParcelFileDescriptor? = null
+    @Volatile private var hevRuntime: HevTunnelRuntime? = null
+    @Volatile private var hevPair: HevPacketSocketPair? = null
+    @Volatile private var hevRelay: HevTunPacketRelay? = null
 
     override fun onBind(intent: Intent?): IBinder? = super.onBind(intent)
 
@@ -138,7 +142,8 @@ class NetSwapPeerProxyService : VpnService() {
                 proxy = receiverProxy
                 peerController.attachReceiverProxy(receiverProxy)
                 val info = receiverProxy.start()
-                publish(false, "Receiver proxy: socks5://${info.host}:${info.port}")
+                startReceiverDeviceTunnel(info.port)
+                publish(true, "NetSwap device tunnel active. Connecting peer…")
             }
 
             if (!stopped.get()) peerController.start()
@@ -148,6 +153,31 @@ class NetSwapPeerProxyService : VpnService() {
             stopPeer()
             stopSelf()
         }
+    }
+
+    /** Installs an IPv4 default route and pipes packets through Hev -> local SOCKS5 -> WebRTC. */
+    private fun startReceiverDeviceTunnel(socksPort: Int) {
+        check(VpnService.prepare(this) == null) { "Android VPN permission is required." }
+        val tun = Builder()
+            .setSession("NetSwap internet sharing")
+            .setMtu(1400)
+            .addAddress("198.18.0.2", 32)
+            .addRoute("0.0.0.0", 0)
+            .addDnsServer("1.1.1.1")
+            .addDisallowedApplication(packageName)
+            .establish() ?: error("Android could not establish receiver VPN interface.")
+        receiverTun = tun
+        val pair = HevPacketSocketPair.create()
+        hevPair = pair
+        val runtime = HevTunnelRuntime(this)
+        hevRuntime = runtime
+        runtime.start(pair.hevDescriptor, "127.0.0.1", socksPort)
+        val androidDevice = AndroidTunPacketDevice.from(tun)
+        val relay = HevTunPacketRelay(androidDevice, pair.packetDevice) { reason ->
+            publish(false, "Packet tunnel stopped: ${reason.take(120)}")
+        }
+        hevRelay = relay
+        relay.start()
     }
 
     private fun publish(active: Boolean, message: String) {
@@ -177,6 +207,14 @@ class NetSwapPeerProxyService : VpnService() {
         if (!stopped.compareAndSet(false, true)) return
         try { controller?.close() } catch (_: Exception) {}
         controller = null
+        try { hevRelay?.close() } catch (_: Exception) {}
+        hevRelay = null
+        try { hevRuntime?.close() } catch (_: Exception) {}
+        hevRuntime = null
+        try { hevPair?.close() } catch (_: Exception) {}
+        hevPair = null
+        try { receiverTun?.close() } catch (_: Exception) {}
+        receiverTun = null
         try { proxy?.close() } catch (_: Exception) {}
         proxy = null
         try { endpoint?.close() } catch (_: Exception) {}
