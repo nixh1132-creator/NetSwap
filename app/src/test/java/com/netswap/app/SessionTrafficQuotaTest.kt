@@ -67,6 +67,13 @@ class SessionTrafficQuotaTest {
         assertFalse(quota.snapshot().active)
     }
 
+    @Test fun snapshotTotalIsTheSumOfBothDirections() {
+        val quota = SessionTrafficQuota(500)
+        assertTrue(quota.record(TrafficDirection.RECEIVED_FROM_RECEIVER, 123))
+        assertTrue(quota.record(TrafficDirection.SENT_TO_RECEIVER, 77))
+        assertEquals(200L, quota.snapshot().totalBytes)
+    }
+
     @Test fun rejectsInvalidQuotaAndPacketSizes() {
         assertThrows(IllegalArgumentException::class.java) { SessionTrafficQuota(0) }
         val quota = SessionTrafficQuota(100)
