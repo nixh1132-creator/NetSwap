@@ -147,6 +147,7 @@ class PeerStreamSocketEndpoint(
 
     private fun decodeDestination(payload: ByteArray): InetSocketAddress {
         require(payload.isNotEmpty()) { "Missing TCP destination." }
+        require(payload.size >= 4) { "TCP destination is too short." }
         val atyp = payload[0].toInt() and 0xff
         val port = ((payload[payload.size - 2].toInt() and 0xff) shl 8) or
             (payload[payload.size - 1].toInt() and 0xff)
