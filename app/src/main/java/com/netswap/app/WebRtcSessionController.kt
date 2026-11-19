@@ -39,6 +39,7 @@ class WebRtcSessionController(
     private var factory: PeerConnectionFactory? = null
     private var pollJob: Job? = null
     @Volatile private var socketEndpoint: PeerStreamSocketEndpoint? = null
+    @Volatile private var receiverProxy: ReceiverSocks5Proxy? = null
 
     fun start() {
         check(!closed.get()) { "Peer session is closed." }
@@ -82,12 +83,18 @@ class WebRtcSessionController(
                     }
                 },
                 onData = { streamId, protocol, payload ->
-                    if (protocol == PeerStreamRouter.Protocol.TCP &&
-                        socketEndpoint?.writeTcp(streamId, payload) != true) {
-                        bridgeError(streamId, "TCP stream write failed.")
+                    if (protocol == PeerStreamRouter.Protocol.TCP) {
+                        val receiver = receiverProxy
+                        if (receiver != null) receiver.onPeerData(streamId, payload)
+                        else if (socketEndpoint?.writeTcp(streamId, payload) != true) {
+                            bridgeError(streamId, "TCP stream write failed.")
+                        }
                     }
                 },
-                onClose = { streamId -> socketEndpoint?.closeStream(streamId) }
+                onClose = { streamId ->
+                    socketEndpoint?.closeStream(streamId)
+                    receiverProxy?.onPeerError(streamId)
+                }
             )
             incomingBridge = bridge
             streamBridge = bridge
@@ -141,6 +148,13 @@ class WebRtcSessionController(
         socketEndpoint = endpoint
     }
 
+    /** Attach the receiver's loopback SOCKS adapter after the peer data channel is ready. */
+    fun attachReceiverProxy(proxy: ReceiverSocks5Proxy) {
+        check(!closed.get()) { "Peer session is closed." }
+        receiverProxy?.close()
+        receiverProxy = proxy
+    }
+
     private fun bridgeError(streamId: Int, message: String) {
         streamBridge?.sendError(streamId, message)
         onError(message)
@@ -171,6 +185,8 @@ class WebRtcSessionController(
         streamBridge = null
         socketEndpoint?.close()
         socketEndpoint = null
+        receiverProxy?.close()
+        receiverProxy = null
         link?.close()
         link = null
         factory?.dispose()
