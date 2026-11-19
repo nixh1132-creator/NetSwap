@@ -254,28 +254,6 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onStartTunnel = { request -> requestUserspaceTunnel(request) },
-                        onPrepareTunnel = { request ->
-                            lifecycleScope.launch {
-                                loading = true
-                                message = "Preparing this phone's secure key…"
-                                try {
-                                    val result = withContext(Dispatchers.IO) {
-                                        val keys = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id)
-                                        NetSwapApi.registerTunnelPublicKey(session!!, request.id, keys.first)
-                                    }
-                                    val both = result.optBoolean("sender_key_registered") && result.optBoolean("receiver_key_registered")
-                                    message = if (both) {
-                                        "This phone's key is registered. Both phones have keys; network gateway setup is still pending."
-                                    } else {
-                                        "This phone's public key is registered. Your friend must prepare their phone too."
-                                    }
-                                    loadHome(session!!, clearMessage = false)
-                                } catch (e: Exception) {
-                                    message = e.message ?: "Could not prepare the secure key."
-                                    loading = false
-                                }
-                            }
-                        },
                         onLogout = { prefs.edit().clear().apply(); session = null; uid = ""; requests = emptyList(); message = "" }
                     )
                 }
@@ -320,7 +298,7 @@ private fun AuthScreen(loading: Boolean, message: String, onLogin: (String,Strin
 private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRequest>, loading: Boolean, message: String,
     vpnActive: Boolean, onRefresh: () -> Unit, onVpnSetup: () -> Unit, onVpnDisconnect: () -> Unit,
     onSend: (String,Long)->Unit, onRespond: (ShareRequest,String)->Unit,
-    onPrepareTunnel: (ShareRequest)->Unit, onStartTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
+    onStartTunnel: (ShareRequest)->Unit, onLogout: ()->Unit) {
     var friendUid by remember { mutableStateOf("") }
     var amountMb by remember { mutableStateOf("100") }
     var activeTab by remember { mutableStateOf("receive") }
@@ -356,12 +334,12 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                 }
                 Button(onClick = { activeTab = "send" }, modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = if (activeTab == "send") Color(0xFF8274B8) else Color(0xFFE8E2FA), contentColor = if (activeTab == "send") White else Ink)) {
-                    Text("Ask for data")
+                    Text("Join")
                 }
             }
             if (activeTab == "send") {
                 Column(Modifier.fillMaxWidth().padding(top = 10.dp).background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
-                    Text("Kis friend se data chahiye?", fontWeight = FontWeight.SemiBold)
+                    Text("Join a friend and request data", fontWeight = FontWeight.SemiBold)
                     OutlinedTextField(friendUid, { friendUid = it.uppercase() }, label = { Text("Friend ka NetSwap UID") },
                         placeholder = { Text("NS-XXXXXXXXXX") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
@@ -378,7 +356,7 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                     Button(onClick = { onSend(friendUid.trim(), parsedMb * 1024L * 1024L) },
                         enabled = !loading && friendUid.startsWith("NS-") && friendUid.length >= 8 && parsedMb in 1..1048576,
                         modifier = Modifier.fillMaxWidth()) { Text(if (loading) "Sending…" else "Send data request") }
-                    Text("Request sirf usi UID wale friend ko jayegi.", color = Muted, fontSize = 11.sp)
+                    Text("UID daalo, data limit chuno aur request bhejo. Accept hone ke baad Join & connect dabao.", color = Muted, fontSize = 11.sp)
                 }
             } else {
                 Text("Tumhare paas aayi requests", fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = Ink,
@@ -397,8 +375,7 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                             }
                             if (r.status == "approved") {
                                 Text("Request accepted", color = Color(0xFF3E725B), fontSize = 12.sp)
-                                OutlinedButton(onClick = { onPrepareTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Prepare secure connection") }
-                                OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start connection") }
+                                OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Start sharing") }
                             }
                         }
                     }
@@ -411,6 +388,10 @@ private fun HomeScreen(session: AuthSession, uid: String, requests: List<ShareRe
                         Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(15.dp)).padding(12.dp)) {
                             Text("To: ${r.receiverName}", fontWeight = FontWeight.SemiBold)
                             Text("${r.quotaBytes / (1024*1024)} MB • ${r.status.uppercase()}", color = Muted, fontSize = 12.sp)
+                            if (r.status == "approved") {
+                                Text("Friend ne request accept kar li. Ab Join & connect karo.", color = Color(0xFF3E725B), fontSize = 12.sp)
+                                OutlinedButton(onClick = { onStartTunnel(r) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text("Join & connect") }
+                            }
                             if (r.status in listOf("pending", "approved")) TextButton(onClick = { onRespond(r, "cancelled") }) { Text("Cancel request") }
                         }
                     }
