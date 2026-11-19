@@ -160,12 +160,17 @@ class NetSwapPeerProxyService : VpnService() {
                     Thread.sleep(200)
                 }
                 startReceiverDeviceTunnel(info.port)
-                val turnStatus = if (peerController.hasTurnRelayCandidate()) {
-                    "TURN relay candidate found; "
+                // Verify a real TCP request crosses SOCKS5 -> WebRTC -> provider upstream.
+                // A gathered TURN candidate alone is not proof that relay traffic is selected.
+                publish(true, "VPN interface started; checking real internet traffic…")
+                val probe = PeerTunnelConnectivityProbe.check(info.port)
+                check(probe.success) { "Peer data path connected, but internet probe failed: ${probe.detail}" }
+                val routeStatus = if (peerController.hasTurnRelayCandidate()) {
+                    "TURN candidate gathered (selected route not yet verified). "
                 } else {
-                    "Direct peer path active; TURN relay not verified on this network; "
+                    "No TURN candidate gathered. "
                 }
-                publish(true, turnStatus + "Internet sharing is active through your friend's mobile data.")
+                publish(true, routeStatus + "Peer internet probe passed (${probe.httpStatus}). VPN tunnel is running.")
             }
 
             if (!stopped.get()) peerController.start()
