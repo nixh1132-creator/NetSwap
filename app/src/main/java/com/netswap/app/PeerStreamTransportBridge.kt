@@ -40,10 +40,22 @@ class PeerStreamTransportBridge(
     }
 
     fun openTcp(streamId: Int, destination: ByteArray): Boolean =
-        sendFrame(PeerStreamFrame(PeerStreamFrame.Type.OPEN_TCP, streamId, destination))
+        openLocalStream(streamId, PeerStreamRouter.Protocol.TCP, PeerStreamFrame.Type.OPEN_TCP, destination)
 
     fun openUdp(streamId: Int, destination: ByteArray): Boolean =
-        sendFrame(PeerStreamFrame(PeerStreamFrame.Type.OPEN_UDP, streamId, destination))
+        openLocalStream(streamId, PeerStreamRouter.Protocol.UDP, PeerStreamFrame.Type.OPEN_UDP, destination)
+
+    private fun openLocalStream(
+        streamId: Int,
+        protocol: PeerStreamRouter.Protocol,
+        type: PeerStreamFrame.Type,
+        destination: ByteArray
+    ): Boolean {
+        if (closed.get() || !router.registerLocalStream(streamId, protocol)) return false
+        if (sendFrame(PeerStreamFrame(type, streamId, destination))) return true
+        router.forgetLocalStream(streamId)
+        return false
+    }
 
     fun sendTcpData(streamId: Int, payload: ByteArray): Boolean =
         sendFrame(PeerStreamFrame(PeerStreamFrame.Type.DATA, streamId, payload))
@@ -51,8 +63,10 @@ class PeerStreamTransportBridge(
     fun sendUdpData(streamId: Int, payload: ByteArray): Boolean =
         sendFrame(PeerStreamFrame(PeerStreamFrame.Type.UDP_DATA, streamId, payload))
 
-    fun closeStream(streamId: Int): Boolean =
-        sendFrame(PeerStreamFrame(PeerStreamFrame.Type.CLOSE, streamId))
+    fun closeStream(streamId: Int): Boolean {
+        router.forgetLocalStream(streamId)
+        return sendFrame(PeerStreamFrame(PeerStreamFrame.Type.CLOSE, streamId))
+    }
 
     fun sendError(streamId: Int, message: String): Boolean {
         val safeMessage = message.toByteArray(Charsets.UTF_8).take(256).toByteArray()
