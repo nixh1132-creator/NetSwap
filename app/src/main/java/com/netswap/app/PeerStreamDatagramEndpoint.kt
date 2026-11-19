@@ -104,16 +104,13 @@ class PeerStreamDatagramEndpoint(
     private fun decode(bytes: ByteArray): InetSocketAddress {
         require(bytes.size >= 4) { "UDP destination is too short" }
         val atyp = bytes[0].toInt() and 0xff
-        val addressLength: Int
         val address: InetAddress
         when (atyp) {
             1 -> {
-                addressLength = 4
                 require(bytes.size == 1 + addressLength + 2) { "Invalid UDP IPv4 destination" }
                 address = InetAddress.getByAddress(bytes.copyOfRange(1, 5))
             }
             4 -> {
-                addressLength = 16
                 require(bytes.size == 1 + addressLength + 2) { "Invalid UDP IPv6 destination" }
                 address = InetAddress.getByAddress(bytes.copyOfRange(1, 17))
             }
@@ -125,7 +122,6 @@ class PeerStreamDatagramEndpoint(
                 val network = upstreamNetwork ?: error("Provider upstream network is unavailable for DNS")
                 address = network.getAllByName(host).firstOrNull { isPublicDestination(it) }
                     ?: error("UDP hostname did not resolve to a public address")
-                addressLength = length
             }
             else -> error("Unsupported UDP address type")
         }
