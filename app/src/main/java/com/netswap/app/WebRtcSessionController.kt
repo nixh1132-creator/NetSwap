@@ -38,6 +38,7 @@ class WebRtcSessionController(
     private var streamBridge: PeerStreamTransportBridge? = null
     private var factory: PeerConnectionFactory? = null
     private var pollJob: Job? = null
+    @Volatile private var socketEndpoint: PeerStreamSocketEndpoint? = null
 
     fun start() {
         check(!closed.get()) { "Peer session is closed." }
@@ -73,11 +74,20 @@ class WebRtcSessionController(
             val bridge = PeerStreamTransportBridge(
                 sendBinary = { bytes -> peerLink.send(bytes) },
                 onOpen = { streamId, protocol, destination ->
-                    onError("Peer stream $streamId requested; socket forwarding is not connected yet.")
-                    false
+                    if (protocol != PeerStreamRouter.Protocol.TCP) {
+                        bridgeError(streamId, "UDP forwarding is not enabled yet.")
+                        false
+                    } else {
+                        socketEndpoint?.openTcp(streamId, destination) == true
+                    }
                 },
-                onData = { _, _, _ -> },
-                onClose = { }
+                onData = { streamId, protocol, payload ->
+                    if (protocol == PeerStreamRouter.Protocol.TCP &&
+                        socketEndpoint?.writeTcp(streamId, payload) != true) {
+                        bridgeError(streamId, "TCP stream write failed.")
+                    }
+                },
+                onClose = { streamId -> socketEndpoint?.closeStream(streamId) }
             )
             incomingBridge = bridge
             streamBridge = bridge
@@ -124,6 +134,18 @@ class WebRtcSessionController(
 
     fun send(bytes: ByteArray): Boolean = link?.send(bytes) == true
 
+    /** Attach the sender-side protected TCP endpoint before accepting peer streams. */
+    fun attachSocketEndpoint(endpoint: PeerStreamSocketEndpoint) {
+        check(!closed.get()) { "Peer session is closed." }
+        socketEndpoint?.close()
+        socketEndpoint = endpoint
+    }
+
+    private fun bridgeError(streamId: Int, message: String) {
+        streamBridge?.sendError(streamId, message)
+        onError(message)
+    }
+
     /** Framed stream APIs are available for the upcoming socket/TUN integration. */
     fun openTcp(streamId: Int, destination: ByteArray): Boolean =
         streamBridge?.openTcp(streamId, destination) == true
@@ -147,6 +169,8 @@ class WebRtcSessionController(
         pollJob?.cancel()
         streamBridge?.close()
         streamBridge = null
+        socketEndpoint?.close()
+        socketEndpoint = null
         link?.close()
         link = null
         factory?.dispose()
