@@ -192,7 +192,7 @@ class MainActivity : ComponentActivity() {
                         try {
                             val data = withContext(Dispatchers.IO) {
                                 val refreshed = if (s.accessToken.isBlank()) NetSwapApi.refresh(s.refreshToken) else s
-                                NetSwapApi.ensureDisplayName(refreshed)
+                                NetSwapApi.displayName(refreshed)
                                 Pair(refreshed, Pair(NetSwapApi.profileUid(refreshed), NetSwapApi.requests(refreshed)))
                             }
                             saveSession(data.first); uid = data.second.first; requests = data.second.second
