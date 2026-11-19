@@ -13,6 +13,11 @@ import android.widget.Toast
 import android.graphics.Bitmap
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import android.content.ClipData
+import android.content.ClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.Image
 import com.wireguard.config.Config
@@ -50,6 +55,27 @@ private val Mint = Color(0xFFDDF2E8)
 private val White = Color(0xFFFFFFFF)
 
 class MainActivity : ComponentActivity() {
+    private var qrScanCallback: ((String) -> Unit)? = null
+
+    private fun scanNetSwapQr(onResult: (String) -> Unit) {
+        qrScanCallback = onResult
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE)
+            .enableAutoZoom()
+            .build()
+        GmsBarcodeScanning.getClient(this, options).startScan()
+            .addOnSuccessListener { barcode ->
+                val value = barcode.rawValue.orEmpty().trim().uppercase()
+                if (value.matches(Regex("NS-[A-Z0-9-]{5,13}"))) qrScanCallback?.invoke(value)
+                else Toast.makeText(this, "This QR is not a valid NetSwap ID.", Toast.LENGTH_LONG).show()
+                qrScanCallback = null
+            }
+            .addOnCanceledListener { qrScanCallback = null }
+            .addOnFailureListener { error ->
+                qrScanCallback = null
+                Toast.makeText(this, error.message ?: "QR scanner could not start.", Toast.LENGTH_LONG).show()
+            }
+    }
     private val vpnState = mutableStateOf(false)
     private val vpnStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -247,6 +273,7 @@ class MainActivity : ComponentActivity() {
                                     withContext(Dispatchers.IO) {
                                         val friend = NetSwapApi.lookupUid(session!!, friendUid)
                                             ?: throw IllegalArgumentException("No NetSwap user found with that UID.")
+                                        require(friend.userId != session!!.userId) { "You cannot send a request to your own NetSwap ID." }
                                         NetSwapApi.sendRequest(session!!, friend.userId, quota)
                                     }
                                     message = "Sharing request sent. Your friend must accept it."
@@ -262,6 +289,7 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onStartTunnel = { request -> requestUserspaceTunnel(request) },
+                        onScanUid = { callback -> scanNetSwapQr(callback) },
                         onLogout = { prefs.edit().clear().apply(); session = null; uid = ""; requests = emptyList(); message = "" }
                     )
                 }
@@ -319,8 +347,10 @@ private fun HomeScreen(
     onSend: (String, Long) -> Unit,
     onRespond: (ShareRequest, String) -> Unit,
     onStartTunnel: (ShareRequest) -> Unit,
+    onScanUid: ((String) -> Unit) -> Unit,
     onLogout: () -> Unit
 ) {
+    val context = LocalContext.current
     var friendUid by remember { mutableStateOf("") }
     var usernameInput by remember(displayName) { mutableStateOf(displayName) }
     var amountMb by remember { mutableStateOf("100") }
@@ -398,6 +428,19 @@ private fun HomeScreen(
                                 CircularProgressIndicator()
                             }
                             Text("QR contains only your public NetSwap ID, not login or session credentials.", color = Muted, fontSize = 10.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                                        .setPrimaryClip(ClipData.newPlainText("NetSwap ID", uid))
+                                    Toast.makeText(context, "NetSwap ID copied.", Toast.LENGTH_SHORT).show()
+                                }, enabled = uid.isNotBlank()) { Text("Copy ID") }
+                                OutlinedButton(onClick = {
+                                    context.startActivity(Intent.createChooser(
+                                        Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "My NetSwap ID: $uid"),
+                                        "Share NetSwap ID"
+                                    ))
+                                }, enabled = uid.isNotBlank()) { Text("Share ID") }
+                            }
                         }
                         Spacer(Modifier.height(12.dp))
                         OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Log out") }
@@ -416,6 +459,10 @@ private fun HomeScreen(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth()
                             )
+                            OutlinedButton(onClick = { onScanUid { scanned -> friendUid = scanned } }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Scan friend's QR code")
+                            }
+                            Text("Or enter the ID manually. QR scan needs Google Code Scanner services.", color = Muted, fontSize = 10.sp)
                             Spacer(Modifier.height(14.dp))
                             Text("Data limit", fontWeight = FontWeight.SemiBold)
                             OutlinedTextField(
