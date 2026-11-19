@@ -170,7 +170,10 @@ class PeerStreamSocketEndpoint(
                 }
                 val host = payload.copyOfRange(2, 2 + length).toString(Charsets.US_ASCII)
                 require(host.isNotBlank() && host.all { it.code in 33..126 }) { "Invalid destination hostname." }
-                val resolved = upstreamNetwork?.getAllByName(host) ?: InetAddress.getAllByName(host)
+                val network = upstreamNetwork ?: throw IllegalArgumentException(
+                    "Provider upstream network is unavailable for DNS."
+                )
+                val resolved = network.getAllByName(host)
                 resolved.firstOrNull(::isPublicInternetAddress)
                     ?: throw IllegalArgumentException("Destination did not resolve to a public internet address.")
             }
