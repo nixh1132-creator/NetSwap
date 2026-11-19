@@ -96,6 +96,20 @@ object NetSwapApi {
         return TunnelSessionConfig.fromJson(rows.getJSONObject(0), session.userId, localPublicKey)
     }
 
+    /** Fetches authenticated ICE servers; TURN credentials are never stored in the APK. */
+    fun peerIceServers(session: AuthSession): JSONArray {
+        val response = JSONObject(call(
+            "/functions/v1/netswap-ice-config",
+            "POST",
+            session.accessToken,
+            JSONObject()
+        ))
+        val servers = response.optJSONArray("iceServers")
+            ?: throw IllegalStateException("TURN configuration is missing.")
+        require(servers.length() in 1..8) { "Invalid ICE server configuration." }
+        return servers
+    }
+
     fun registerTunnelPublicKey(session: AuthSession, requestId: String, publicKey: String): JSONObject {
         return JSONObject(call(
             "/functions/v1/register-tunnel-public-key",
