@@ -628,6 +628,27 @@ private fun RequestCard(
     Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
         Text(title, fontWeight = FontWeight.SemiBold, color = Ink)
         Text(detail, color = Muted, fontSize = 12.sp)
+        if (request.status == "approved") {
+            val quota = request.quotaBytes.coerceAtLeast(0L)
+            val used = request.usedBytes.coerceIn(0L, quota)
+            val remaining = (quota - used).coerceAtLeast(0L)
+            val progress = if (quota > 0L) used.toFloat() / quota.toFloat() else 0f
+            fun mb(bytes: Long): String = String.format(java.util.Locale.US, "%.1f", bytes / (1024.0 * 1024.0))
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Used ${mb(used)} MB", color = Muted, fontSize = 11.sp)
+                Text("${mb(remaining)} MB left", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth().height(7.dp),
+                color = if (remaining == 0L) Color(0xFFCC665F) else Color(0xFF6B9B83),
+                trackColor = Lavender
+            )
+            if (remaining == 0L) {
+                Text("Data limit reached. This connection has no quota remaining.", color = Color(0xFFB24E48), fontSize = 11.sp)
+            }
+        }
         Spacer(Modifier.height(8.dp))
         when {
             request.status == "pending" && incoming -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
