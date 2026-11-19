@@ -109,21 +109,23 @@ class ReceiverSocks5Proxy(
             val atyp = input.readUnsignedByte()
             if (command == 3) { handleUdpAssociate(socket, input, output, atyp); return }
             if (command != 1) { reply(output, 7); return }
-            val address = when (atyp) {
-                1 -> ByteArray(4).also(input::readFully)
-                4 -> ByteArray(16).also(input::readFully)
+            val encodedAddress = when (atyp) {
+                1 -> byteArrayOf(1) + ByteArray(4).also(input::readFully)
+                4 -> byteArrayOf(4) + ByteArray(16).also(input::readFully)
                 3 -> {
                     val length = input.readUnsignedByte()
                     require(length in 1..253)
-                    val host = ByteArray(length).also(input::readFully).toString(Charsets.US_ASCII)
-                    InetAddress.getAllByName(host).first().address
+                    val host = ByteArray(length).also(input::readFully)
+                    require(host.all { (it.toInt() and 0xff) in 33..126 }) { "Invalid destination hostname." }
+                    byteArrayOf(3, length.toByte()) + host
                 }
                 else -> { reply(output, 8); return }
             }
             val port = input.readUnsignedShort()
             if (port == 0) { reply(output, 8); return }
-            val destination = byteArrayOf(if (address.size == 4) 1 else 4) +
-                address + byteArrayOf((port shr 8).toByte(), port.toByte())
+            // Preserve domain names so DNS resolution happens on the provider's
+            // selected upstream network, not on the receiver's own SIM/Wi-Fi.
+            val destination = encodedAddress + byteArrayOf((port shr 8).toByte(), port.toByte())
             streamId = allocateId()
             clients[streamId] = socket
             writers[streamId] = output
