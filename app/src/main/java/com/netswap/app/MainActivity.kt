@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 private val Cream = Color(0xFFF8F6F0)
@@ -233,7 +234,21 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                LaunchedEffect(session?.userId) { session?.let { loadHome(it) } }
+                LaunchedEffect(session?.userId) {
+                    val activeSession = session
+                    if (activeSession != null) {
+                        loadHome(activeSession)
+                        while (true) {
+                            delay(20_000)
+                            try {
+                                val latest = withContext(Dispatchers.IO) { NetSwapApi.requests(activeSession) }
+                                requests = latest
+                            } catch (_: Exception) {
+                                // Keep the last known request state during brief network interruptions.
+                            }
+                        }
+                    }
+                }
 
                 if (session == null) {
                     AuthScreen(loading, message,
