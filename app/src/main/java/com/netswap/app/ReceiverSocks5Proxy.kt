@@ -6,6 +6,8 @@ import java.io.DataOutputStream
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
@@ -24,6 +26,8 @@ class ReceiverSocks5Proxy(
     private val openTcp: (Int, ByteArray) -> Boolean,
     private val sendData: (Int, ByteArray) -> Boolean,
     private val closePeerStream: (Int) -> Boolean,
+    private val openUdp: (Int, ByteArray) -> Boolean = { _, _ -> false },
+    private val sendUdpData: (Int, ByteArray) -> Boolean = { _, _ -> false },
     private val maxClients: Int = 8
 ) : Closeable {
     data class Info(val host: String, val port: Int)
@@ -32,6 +36,8 @@ class ReceiverSocks5Proxy(
     private val nextId = AtomicInteger(1)
     private val clients = ConcurrentHashMap<Int, Socket>()
     private val writers = ConcurrentHashMap<Int, DataOutputStream>()
+    private val udpStreams = ConcurrentHashMap<Int, UdpTarget>()
+    private val udpSockets = ConcurrentHashMap<Int, DatagramSocket>()
     private val workers = Executors.newFixedThreadPool(maxClients)
     @Volatile private var server: ServerSocket? = null
 
@@ -68,6 +74,16 @@ class ReceiverSocks5Proxy(
         }
     }
 
+    /** Return a UDP response to the local SOCKS5 UDP client. */
+    fun onPeerUdpData(streamId: Int, payload: ByteArray) {
+        val target = udpStreams[streamId] ?: return
+        val socket = udpSockets[target.associationId] ?: return
+        val addr = target.address.address
+        val header = byteArrayOf(0, 0, 0, if (addr.size == 4) 1 else 4) + addr + byteArrayOf((target.port shr 8).toByte(), target.port.toByte())
+        val bytes = header + payload
+        runCatching { socket.send(DatagramPacket(bytes, bytes.size, target.client)) }
+    }
+
     /** Called when the remote endpoint reports an asynchronous connect/stream error. */
     fun onPeerError(streamId: Int) = closeLocal(streamId, notifyPeer = false)
 
@@ -91,6 +107,7 @@ class ReceiverSocks5Proxy(
             val command = input.readUnsignedByte()
             input.readUnsignedByte() // reserved
             val atyp = input.readUnsignedByte()
+            if (command == 3) { handleUdpAssociate(socket, input, output); return }
             if (command != 1) { reply(output, 7); return }
             val address = when (atyp) {
                 1 -> ByteArray(4).also(input::readFully)
@@ -131,6 +148,64 @@ class ReceiverSocks5Proxy(
         }
     }
 
+
+    private fun handleUdpAssociate(control: Socket, input: DataInputStream, output: DataOutputStream) {
+        val atyp = input.readUnsignedByte()
+        val rawAddress = when (atyp) {
+            1 -> ByteArray(4).also(input::readFully)
+            4 -> ByteArray(16).also(input::readFully)
+            3 -> ByteArray(input.readUnsignedByte()).also(input::readFully)
+            else -> { reply(output, 8); return }
+        }
+        input.readUnsignedShort() // requested UDP port; client endpoint is learned from first datagram
+        val udp = DatagramSocket(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
+        val local = udp.localSocketAddress as InetSocketAddress
+        val bind = local.address.address
+        output.write(byteArrayOf(5, 0, 0, if (bind.size == 4) 1 else 4) + bind + byteArrayOf((local.port shr 8).toByte(), local.port.toByte()))
+        output.flush()
+        val associationId = allocateId()
+        udpSockets[associationId] = udp
+        var client: InetSocketAddress? = null
+        control.soTimeout = 0
+        val buffer = ByteArray(65507)
+        try {
+            while (!closed.get() && !control.isClosed) {
+                val packet = DatagramPacket(buffer, buffer.size)
+                udp.receive(packet)
+                val source = packet.socketAddress as InetSocketAddress
+                if (client == null) client = source
+                if (source != client) continue
+                val bytes = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
+                if (bytes.size < 7 || bytes[0] != 0.toByte() || bytes[1] != 0.toByte() || bytes[2] != 0.toByte()) continue
+                val type = bytes[3].toInt() and 255
+                val len = when (type) { 1 -> 4; 4 -> 16; 3 -> if (bytes.size > 4) bytes[4].toInt() and 255 else 0; else -> 0 }
+                val offset = if (type == 3) 5 else 4
+                if (len !in 1..253 || bytes.size < offset + len + 2) continue
+                val address = if (type == 3) InetAddress.getByName(bytes.copyOfRange(offset, offset + len).toString(Charsets.US_ASCII)) else InetAddress.getByAddress(bytes.copyOfRange(offset, offset + len))
+                val portOffset = offset + len
+                val port = ((bytes[portOffset].toInt() and 255) shl 8) or (bytes[portOffset + 1].toInt() and 255)
+                if (port == 0) continue
+                val key = address.hostAddress + ":" + port
+                var streamId = udpStreams.entries.firstOrNull { it.value.associationId == associationId && it.value.key == key }?.key
+                if (streamId == null) {
+                    streamId = allocateId()
+                    val target = UdpTarget(associationId, client, address, port, key)
+                    udpStreams[streamId] = target
+                    val destination = byteArrayOf(if (address.address.size == 4) 1 else 4) + address.address + byteArrayOf((port shr 8).toByte(), port.toByte())
+                    if (!openUdp(streamId, destination)) { udpStreams.remove(streamId); continue }
+                }
+                val body = bytes.copyOfRange(portOffset + 2, bytes.size)
+                if (body.isNotEmpty()) sendUdpData(streamId, body)
+            }
+        } finally {
+            udpSockets.remove(associationId)?.close()
+            val ids = udpStreams.filterValues { it.associationId == associationId }.keys
+            ids.forEach { udpStreams.remove(it); closePeerStream(it) }
+        }
+    }
+
+    private data class UdpTarget(val associationId: Int, val client: InetSocketAddress, val address: InetAddress, val port: Int, val key: String)
+
     private fun reply(output: DataOutputStream, code: Int) {
         output.write(byteArrayOf(5, code.toByte(), 0, 1, 0, 0, 0, 0, 0, 0))
         output.flush()
@@ -155,6 +230,10 @@ class ReceiverSocks5Proxy(
         runCatching { server?.close() }
         server = null
         clients.keys.toList().forEach { closeLocal(it, notifyPeer = true) }
+        udpSockets.values.forEach { runCatching { it.close() } }
+        udpSockets.clear()
+        udpStreams.keys.toList().forEach { closePeerStream(it) }
+        udpStreams.clear()
         workers.shutdownNow()
     }
 }
