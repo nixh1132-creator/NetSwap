@@ -17,8 +17,8 @@ import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Owns the authenticated signaling lifecycle for one approved sharing request.
- * This establishes a WebRTC data channel only; it does not yet forward VPN packets.
+ * Owns signaling, WebRTC data transport, stream framing, and the attached
+ * receiver SOCKS / provider TCP+UDP endpoints for one approved request.
  */
 class WebRtcSessionController(
     context: Context,
