@@ -8,7 +8,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Owns the JNI lifecycle for the pinned Hev SOCKS5 tunnel engine.
- * Uses the upstream-compatible Java static JNI binding in hev.htproxy.TProxyService.
+ * The Java JNI binding is resolved reflectively so Kotlin compilation does
+ * not depend on javac source-order visibility.
  */
 class HevTunnelRuntime(
     private val context: Context
@@ -16,6 +17,19 @@ class HevTunnelRuntime(
     private val closed = AtomicBoolean(false)
     private var descriptor: ParcelFileDescriptor? = null
     @Volatile private var started = false
+
+    private val binding: Class<*> by lazy {
+        Class.forName("hev.htproxy.TProxyService")
+    }
+
+    private fun invokeBoolean(method: String, vararg args: Any): Boolean {
+        val signature = when (method) {
+            "TProxyStartService" -> arrayOf(String::class.java, Int::class.javaPrimitiveType)
+            else -> emptyArray()
+        }
+        val result = binding.getMethod(method, *signature).invoke(null, *args)
+        return result as Boolean
+    }
 
     @Synchronized
     fun start(packetDescriptor: ParcelFileDescriptor, socksHost: String, socksPort: Int): Boolean {
@@ -50,7 +64,7 @@ class HevTunnelRuntime(
         )
         val owned = ParcelFileDescriptor.dup(packetDescriptor.fileDescriptor)
         val ok = try {
-            hev.htproxy.TProxyService.TProxyStartService(config.absolutePath, owned.fd)
+            invokeBoolean("TProxyStartService", config.absolutePath, owned.fd)
         } catch (failure: Exception) {
             owned.close()
             throw failure
@@ -64,14 +78,17 @@ class HevTunnelRuntime(
         return true
     }
 
-    fun isRunning(): Boolean = !closed.get() && started && hev.htproxy.TProxyService.TProxyIsRunning()
+    fun isRunning(): Boolean =
+        !closed.get() && started && invokeBoolean("TProxyIsRunning")
 
-    fun stats(): LongArray = if (isRunning()) hev.htproxy.TProxyService.TProxyGetStats() else longArrayOf(0, 0, 0, 0)
+    fun stats(): LongArray =
+        if (isRunning()) binding.getMethod("TProxyGetStats").invoke(null) as LongArray
+        else longArrayOf(0, 0, 0, 0)
 
     @Synchronized
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        if (started) runCatching { hev.htproxy.TProxyService.TProxyStopService() }
+        if (started) runCatching { invokeBoolean("TProxyStopService") }
         started = false
         runCatching { descriptor?.close() }
         descriptor = null
