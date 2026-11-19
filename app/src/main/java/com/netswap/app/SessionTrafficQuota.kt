@@ -3,9 +3,9 @@ package com.netswap.app
 /**
  * Thread-safe, fail-closed per-session byte budget.
  *
- * This is an accounting primitive for the future packet-forwarding path. It is not
- * connected to sockets/TUN yet; callers must invoke record() for every forwarded
- * packet before forwarding it and stop immediately when it returns false.
+ * Shared bidirectional byte budget attached to both provider TCP and UDP
+ * endpoints. Each endpoint reserves bytes before forwarding and fails closed
+ * when the session limit is reached.
  */
 enum class TrafficDirection { RECEIVED_FROM_RECEIVER, SENT_TO_RECEIVER }
 
