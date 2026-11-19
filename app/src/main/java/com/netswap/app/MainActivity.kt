@@ -119,17 +119,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private var pendingTunnelRequestId: String? = null
-    private var pendingTunnelPublicKey: String? = null
     private val userspaceVpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val id = pendingTunnelRequestId
-        val key = pendingTunnelPublicKey
         pendingTunnelRequestId = null
-        pendingTunnelPublicKey = null
-        if (result.resultCode == RESULT_OK && id != null && key != null) launchUserspaceVpn(id, key)
+        if (result.resultCode == RESULT_OK && id != null) launchUserspaceVpn(id)
         else Toast.makeText(this, "VPN permission is required.", Toast.LENGTH_LONG).show()
     }
 
-    private fun launchUserspaceVpn(id: String, key: String) {
+    private fun launchUserspaceVpn(id: String) {
         val intent = Intent(this, NetSwapPeerProxyService::class.java)
             .setAction(NetSwapPeerProxyService.ACTION_START)
             .putExtra(NetSwapPeerProxyService.EXTRA_REQUEST_ID, id)
@@ -137,34 +134,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestUserspaceTunnel(request: ShareRequest) {
-        lifecycleScope.launch {
-            try {
-                val key = withContext(Dispatchers.IO) {
-                    val publicKey = SecureTunnelKeys.getOrCreate(this@MainActivity, request.id).first
-                    NetSwapApi.registerTunnelPublicKey(
-                        AuthSession(
-                            prefs.getString("access_token", "") ?: "",
-                            prefs.getString("refresh_token", "") ?: "",
-                            prefs.getString("user_id", "") ?: "",
-                            prefs.getString("email", "") ?: ""
-                        ),
-                        request.id,
-                        publicKey
-                    )
-                    publicKey
-                }
-                pendingTunnelRequestId = request.id
-                pendingTunnelPublicKey = key
-                val prepare = VpnService.prepare(this@MainActivity)
-                if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
-                else {
-                    pendingTunnelRequestId = null
-                    pendingTunnelPublicKey = null
-                    launchUserspaceVpn(request.id, key)
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this@MainActivity, e.message ?: "Could not start secure tunnel.", Toast.LENGTH_LONG).show()
-            }
+        pendingTunnelRequestId = request.id
+        val prepare = VpnService.prepare(this)
+        if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
+        else {
+            pendingTunnelRequestId = null
+            launchUserspaceVpn(request.id)
         }
     }
 
