@@ -30,6 +30,7 @@ class WebRtcPeerLink(
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val dataChannelReady = AtomicBoolean(false)
+    private val turnRelayCandidateFound = AtomicBoolean(false)
     private val config = PeerConnection.RTCConfiguration(iceServers).apply {
         sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
@@ -47,6 +48,7 @@ class WebRtcPeerLink(
         override fun onIceConnectionReceivingChange(receiving: Boolean) {}
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {}
         override fun onIceCandidate(candidate: IceCandidate) {
+            if (candidate.sdp.contains(" typ relay", ignoreCase = true)) turnRelayCandidateFound.set(true)
             onSignal("ice", JSONObject()
                 .put("sdp", candidate.sdp)
                 .put("sdp_mid", candidate.sdpMid)
@@ -177,6 +179,8 @@ class WebRtcPeerLink(
     }
 
     fun isDataChannelOpen(): Boolean = dataChannelReady.get() && channel?.state() == DataChannel.State.OPEN
+
+    fun hasTurnRelayCandidate(): Boolean = turnRelayCandidateFound.get()
 
     /** Binary messages are bounded to avoid unbounded memory pressure. */
     fun send(bytes: ByteArray): Boolean {
