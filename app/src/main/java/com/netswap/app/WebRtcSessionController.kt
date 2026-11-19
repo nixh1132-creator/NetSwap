@@ -178,6 +178,9 @@ class WebRtcSessionController(
 
     fun sendPing(): Boolean = streamBridge?.sendPing() == true
 
+    fun sendStreamError(streamId: Int, message: String): Boolean =
+        streamBridge?.sendError(streamId, message) == true
+
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         pollJob?.cancel()
