@@ -39,6 +39,10 @@ class PeerStreamDatagramEndpoint(
             sendError(id, e.message ?: "Could not open protected UDP socket")
             return false
         }
+        try { socket.connect(target) } catch (_: Exception) {
+            sockets.release(socket)
+            return false
+        }
         val stream = Stream(socket, target)
         if (streams.putIfAbsent(id, stream) != null) {
             sockets.release(socket)
@@ -76,7 +80,7 @@ class PeerStreamDatagramEndpoint(
             closeStream(id); return false
         }
         return try {
-            val packet = DatagramPacket(payload, payload.size, stream.target)
+            val packet = DatagramPacket(payload, payload.size)
             stream.socket.send(packet)
             true
         } catch (_: Exception) { closeStream(id); false }
