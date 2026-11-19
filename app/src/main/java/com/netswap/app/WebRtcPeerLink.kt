@@ -100,6 +100,7 @@ class WebRtcPeerLink(
     fun acceptOffer(sdp: String): CompletableFuture<String> {
         val result = CompletableFuture<String>()
         if (closed.get()) return failed("Peer link is closed.")
+        if (peer.signalingState() != PeerConnection.SignalingState.STABLE) return failed("Peer is already negotiating; stop both tunnels and start again.")
         val offer = SessionDescription(SessionDescription.Type.OFFER, sdp)
         peer.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
@@ -131,6 +132,8 @@ class WebRtcPeerLink(
 
     fun acceptAnswer(sdp: String): CompletableFuture<Unit> {
         val result = CompletableFuture<Unit>()
+        if (closed.get()) return failed("Peer link is closed.")
+        if (peer.signalingState() != PeerConnection.SignalingState.HAVE_LOCAL_OFFER) { result.complete(Unit); return result }
         peer.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
                 markRemoteDescriptionReady()
