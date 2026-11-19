@@ -10,6 +10,11 @@ import android.content.Context
 import android.content.IntentFilter
 import android.net.VpnService
 import android.widget.Toast
+import android.graphics.Bitmap
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
 import com.wireguard.config.Config
 import java.io.ByteArrayInputStream
 import androidx.activity.result.contract.ActivityResultContracts
@@ -374,10 +379,25 @@ private fun HomeScreen(
                             ) { Text(if (loading) "Saving…" else "Save username") }
                         }
                         Spacer(Modifier.height(12.dp))
-                        Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(20.dp)).padding(16.dp)) {
+                        Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(20.dp)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("Your NetSwap ID", color = Muted, fontSize = 12.sp)
                             Text(if (uid.isBlank()) "Loading…" else uid, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
-                            Text("Share this ID with a friend so they can send you a request.", color = Muted, fontSize = 11.sp)
+                            Text("Friend can scan this QR to read your ID.", color = Muted, fontSize = 11.sp)
+                            Spacer(Modifier.height(12.dp))
+                            if (uid.isNotBlank()) {
+                                val qrBitmap = remember(uid) {
+                                    val matrix = QRCodeWriter().encode(uid, BarcodeFormat.QR_CODE, 640, 640)
+                                    Bitmap.createBitmap(640, 640, Bitmap.Config.ARGB_8888).also { bitmap ->
+                                        for (x in 0 until 640) for (y in 0 until 640) {
+                                            bitmap.setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+                                        }
+                                    }
+                                }
+                                Image(bitmap = qrBitmap.asImageBitmap(), contentDescription = "NetSwap ID QR code", modifier = Modifier.size(210.dp))
+                            } else {
+                                CircularProgressIndicator()
+                            }
+                            Text("QR contains only your public NetSwap ID, not login or session credentials.", color = Muted, fontSize = 10.sp)
                         }
                         Spacer(Modifier.height(12.dp))
                         OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Log out") }
