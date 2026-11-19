@@ -8,7 +8,7 @@ import java.net.URL
 
 data class AuthSession(val accessToken: String, val refreshToken: String, val userId: String, val email: String)
 data class Friend(val userId: String, val uid: String, val displayName: String?)
-data class ShareRequest(val id: String, val senderId: String, val receiverId: String, val quotaBytes: Long, val usedBytes: Long, val status: String, val createdAt: String)
+data class ShareRequest(val id: String, val senderId: String, val receiverId: String, val quotaBytes: Long, val usedBytes: Long, val status: String, val createdAt: String, val senderName: String, val receiverName: String)
 data class PeerSignal(val id: String, val requestId: String, val fromUserId: String, val type: String, val payload: JSONObject, val createdAt: String)
 
 object NetSwapApi {
@@ -80,12 +80,16 @@ object NetSwapApi {
     }
 
     fun requests(session: AuthSession): List<ShareRequest> {
-        val filter = "select=id,sender_id,receiver_id,quota_bytes,used_bytes,status,created_at&or=(sender_id.eq.${enc(session.userId)},receiver_id.eq.${enc(session.userId)})&order=created_at.desc"
-        val rows = JSONArray(call("/rest/v1/sharing_requests?$filter", "GET", session.accessToken))
+        val rows = JSONArray(call("/rest/v1/rpc/list_netswap_requests", "POST", session.accessToken, JSONObject()))
         return (0 until rows.length()).map { i ->
             val r = rows.getJSONObject(i)
-            ShareRequest(r.getString("id"), r.getString("sender_id"), r.getString("receiver_id"),
-                r.getLong("quota_bytes"), r.optLong("used_bytes"), r.getString("status"), r.optString("created_at"))
+            ShareRequest(
+                r.getString("id"), r.getString("sender_id"), r.getString("receiver_id"),
+                r.getLong("quota_bytes"), r.optLong("used_bytes"), r.getString("status"),
+                r.optString("created_at"),
+                r.optString("sender_name").ifBlank { "NetSwap user" },
+                r.optString("receiver_name").ifBlank { "NetSwap user" }
+            )
         }
     }
 
