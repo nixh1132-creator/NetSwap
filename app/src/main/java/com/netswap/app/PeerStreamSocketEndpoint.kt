@@ -19,9 +19,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * ATYP(1=IPv4, 4=IPv6, 3=domain) + address/hostname + big-endian port(2).
  * Domain names are resolved using the provider's selected upstream Network.
  *
- * Each upstream socket is protected from the local VPN and optionally bound to
- * the sender's selected cellular Network. This endpoint is a TCP building block;
- * the receiver TUN-to-stream adapter and app lifecycle still have to be connected.
+ * Each upstream socket is protected from the provider VPN and bound to the
+ * provider's selected cellular Network. The endpoint is attached to the live
+ * WebRTC stream router by NetSwapPeerProxyService.
  */
 class PeerStreamSocketEndpoint(
     vpnService: VpnService,
@@ -49,12 +49,13 @@ class PeerStreamSocketEndpoint(
     /** Accepts a TCP OPEN without blocking the WebRTC callback thread. */
     fun openTcp(streamId: Int, destination: ByteArray): Boolean {
         if (closed.get() || streamId <= 0 || streams.size >= maxStreams) return false
-        val address = try { decodeDestination(destination) } catch (_: IllegalArgumentException) { return false }
         val stream = Stream()
         if (streams.putIfAbsent(streamId, stream) != null) return false
         return try {
             workers.execute {
                 try {
+                    // DNS and socket creation run off the WebRTC callback thread.
+                    val address = decodeDestination(destination)
                     val socket = sockets.openTcp(address, CONNECT_TIMEOUT_MS)
                     synchronized(stream) {
                         if (stream.closed.get() || closed.get()) {
