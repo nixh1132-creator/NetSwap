@@ -35,6 +35,7 @@ class WebRtcSessionController(
     private val peerUserId = if (session.userId == request.senderId) request.receiverId else request.senderId
     private val isOfferer = session.userId == request.senderId
     private var link: WebRtcPeerLink? = null
+    private var streamBridge: PeerStreamTransportBridge? = null
     private var factory: PeerConnectionFactory? = null
     private var pollJob: Job? = null
 
@@ -50,6 +51,7 @@ class WebRtcSessionController(
             val ice = listOf(
                 PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
             )
+            var incomingBridge: PeerStreamTransportBridge? = null
             val peerLink = WebRtcPeerLink(
                 factory = peerFactory,
                 iceServers = ice,
@@ -61,10 +63,24 @@ class WebRtcSessionController(
                     }
                 },
                 onState = onState,
-                onMessage = onMessage,
+                onMessage = { bytes ->
+                    incomingBridge?.receive(bytes)
+                    onMessage(bytes)
+                },
                 onError = onError
             )
             link = peerLink
+            val bridge = PeerStreamTransportBridge(
+                sendBinary = { bytes -> peerLink.send(bytes) },
+                onOpen = { streamId, protocol, destination ->
+                    onError("Peer stream $streamId requested; socket forwarding is not connected yet.")
+                    false
+                },
+                onData = { _, _, _ -> },
+                onClose = { }
+            )
+            incomingBridge = bridge
+            streamBridge = bridge
             if (isOfferer) {
                 peerLink.createOffer().whenComplete { _, error ->
                     if (error != null) onError(error.message ?: "Could not create peer offer.")
@@ -108,9 +124,29 @@ class WebRtcSessionController(
 
     fun send(bytes: ByteArray): Boolean = link?.send(bytes) == true
 
+    /** Framed stream APIs are available for the upcoming socket/TUN integration. */
+    fun openTcp(streamId: Int, destination: ByteArray): Boolean =
+        streamBridge?.openTcp(streamId, destination) == true
+
+    fun openUdp(streamId: Int, destination: ByteArray): Boolean =
+        streamBridge?.openUdp(streamId, destination) == true
+
+    fun sendTcpData(streamId: Int, payload: ByteArray): Boolean =
+        streamBridge?.sendTcpData(streamId, payload) == true
+
+    fun sendUdpData(streamId: Int, payload: ByteArray): Boolean =
+        streamBridge?.sendUdpData(streamId, payload) == true
+
+    fun closeStream(streamId: Int): Boolean =
+        streamBridge?.closeStream(streamId) == true
+
+    fun sendPing(): Boolean = streamBridge?.sendPing() == true
+
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         pollJob?.cancel()
+        streamBridge?.close()
+        streamBridge = null
         link?.close()
         link = null
         factory?.dispose()
