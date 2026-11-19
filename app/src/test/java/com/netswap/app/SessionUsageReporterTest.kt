@@ -49,7 +49,7 @@ class SessionUsageReporterTest {
 
     @Test fun serverQuotaCompletionRevokesLocalBudget() {
         val quota = SessionTrafficQuota(100)
-        val reporter = SessionUsageReporter(quota) { 100L }
+        val reporter = SessionUsageReporter(quota, reportUsage = { 100L })
         quota.record(TrafficDirection.SENT_TO_RECEIVER, 100)
         reporter.flushNow()
         assertFalse(quota.snapshot().active)
