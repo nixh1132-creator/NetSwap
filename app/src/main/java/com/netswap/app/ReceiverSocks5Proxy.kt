@@ -194,7 +194,7 @@ class ReceiverSocks5Proxy(
                     if (!openUdp(streamId, destination)) { udpStreams.remove(streamId); continue }
                 }
                 val body = bytes.copyOfRange(portOffset + 2, bytes.size)
-                if (body.isNotEmpty()) sendUdpData(streamId, body)
+                if (body.isNotEmpty() && body.size <= PeerStreamFrame.MAX_PAYLOAD_BYTES) sendUdpData(streamId, body)
             }
         } finally {
             udpSockets.remove(associationId)?.close()
