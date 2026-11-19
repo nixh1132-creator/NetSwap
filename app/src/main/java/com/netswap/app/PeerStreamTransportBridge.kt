@@ -54,6 +54,11 @@ class PeerStreamTransportBridge(
     fun closeStream(streamId: Int): Boolean =
         sendFrame(PeerStreamFrame(PeerStreamFrame.Type.CLOSE, streamId))
 
+    fun sendError(streamId: Int, message: String): Boolean {
+        val safeMessage = message.toByteArray(Charsets.UTF_8).take(256).toByteArray()
+        return sendFrame(PeerStreamFrame(PeerStreamFrame.Type.ERROR, streamId, safeMessage))
+    }
+
     fun sendPing(): Boolean = sendFrame(PeerStreamFrame(PeerStreamFrame.Type.PING, 0))
 
     fun activeStreamCount(): Int = router.activeStreamCount()
