@@ -51,9 +51,24 @@ class WebRtcSessionController(
             )
             val peerFactory = PeerConnectionFactory.builder().createPeerConnectionFactory()
             factory = peerFactory
-            val ice = listOf(
-                PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-            )
+            val iceJson = NetSwapApi.peerIceServers(session)
+            val ice = buildList {
+                for (index in 0 until iceJson.length()) {
+                    val item = iceJson.getJSONObject(index)
+                    val username = item.optString("username")
+                    val credential = item.optString("credential")
+                    val urls = item.optJSONArray("urls") ?: continue
+                    for (urlIndex in 0 until urls.length()) {
+                        val url = urls.optString(urlIndex).takeIf { it.isNotBlank() } ?: continue
+                        val builder = PeerConnection.IceServer.builder(url)
+                        if (username.isNotBlank() && credential.isNotBlank()) {
+                            builder.setUsername(username).setPassword(credential)
+                        }
+                        add(builder.createIceServer())
+                    }
+                }
+            }
+            check(ice.isNotEmpty()) { "TURN/ICE server list is empty." }
             var incomingBridge: PeerStreamTransportBridge? = null
             val peerLink = WebRtcPeerLink(
                 factory = peerFactory,
