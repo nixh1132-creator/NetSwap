@@ -1,7 +1,7 @@
 package com.netswap.app
 
 /**
- * Thread-safe, fail-closed per-session byte budget.
+ * Thread-safe, fail-closed per-session device-side byte budget. Server reporting is batched separately.
  *
  * Shared bidirectional byte budget attached to both provider TCP and UDP
  * endpoints. Each endpoint reserves bytes before forwarding and fails closed
