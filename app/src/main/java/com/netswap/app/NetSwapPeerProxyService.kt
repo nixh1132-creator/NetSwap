@@ -68,22 +68,16 @@ class NetSwapPeerProxyService : VpnService() {
             val access = prefs.getString("access_token", "") ?: ""
             val userId = prefs.getString("user_id", null) ?: error("Please log in again.")
             val email = prefs.getString("email", "") ?: ""
-            val initial = if (access.isBlank()) NetSwapApi.refresh(refresh)
+            var session = if (access.isBlank()) NetSwapApi.refresh(refresh)
                 else AuthSession(access, refresh, userId, email)
             val requestList = try {
-                NetSwapApi.requests(initial)
+                NetSwapApi.requests(session)
             } catch (_: Exception) {
-                val refreshed = NetSwapApi.refresh(refresh)
-                prefs.edit().putString("access_token", refreshed.accessToken)
-                    .putString("refresh_token", refreshed.refreshToken).apply()
-                NetSwapApi.requests(refreshed)
+                session = NetSwapApi.refresh(refresh)
+                prefs.edit().putString("access_token", session.accessToken)
+                    .putString("refresh_token", session.refreshToken).apply()
+                NetSwapApi.requests(session)
             }
-            val session = if (access.isBlank()) {
-                val refreshed = NetSwapApi.refresh(refresh)
-                prefs.edit().putString("access_token", refreshed.accessToken)
-                    .putString("refresh_token", refreshed.refreshToken).apply()
-                refreshed
-            } else initial
             val request = requestList.firstOrNull {
                 it.id == requestId && it.status == "approved" &&
                     (it.senderId == session.userId || it.receiverId == session.userId)
