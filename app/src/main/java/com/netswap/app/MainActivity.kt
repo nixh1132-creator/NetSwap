@@ -672,8 +672,19 @@ private fun RequestCard(
             }
             request.status == "approved" -> {
                 Text(if (incoming) "You accepted this request." else "Your request was accepted.", color = Color(0xFF3E725B), fontSize = 12.sp)
-                Button(onClick = { onStartTunnel(request) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (incoming) "Start sharing" else "Join & connect")
+                val quotaAvailable = request.quotaBytes > 0L && request.usedBytes < request.quotaBytes
+                Button(
+                    onClick = { onStartTunnel(request) },
+                    enabled = !loading && quotaAvailable,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        when {
+                            !quotaAvailable -> "Data limit reached"
+                            incoming -> "Start sharing"
+                            else -> "Join & connect"
+                        }
+                    )
                 }
             }
             request.status == "pending" && !incoming -> TextButton(onClick = { onRespond(request, "cancelled") }, enabled = !loading) { Text("Cancel request") }
