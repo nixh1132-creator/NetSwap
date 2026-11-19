@@ -166,6 +166,8 @@ class WebRtcSessionController(
 
     fun hasTurnRelayCandidate(): Boolean = link?.hasTurnRelayCandidate() == true
 
+    fun isIceGatheringComplete(): Boolean = link?.isIceGatheringComplete() == true
+
     fun send(bytes: ByteArray): Boolean = link?.send(bytes) == true
 
     /** Attach the sender-side protected TCP endpoint before accepting peer streams. */
