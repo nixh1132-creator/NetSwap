@@ -90,7 +90,7 @@ class MainActivity : ComponentActivity() {
                 NetSwapPeerProxyService.ACTION_STATE -> {
                     vpnState.value = intent.getBooleanExtra(NetSwapPeerProxyService.EXTRA_ACTIVE, false)
                     peerStatus.value = intent.getStringExtra(NetSwapPeerProxyService.EXTRA_STATUS) ?: "Connection status unavailable."
-                    if (!vpnState.value) Toast.makeText(this@MainActivity, peerStatus.value, Toast.LENGTH_LONG).show()
+                    if (!vpnState.value && listOf("failed", "could not", "required", "not found", "cancelled", "needs an active").any { peerStatus.value.contains(it, ignoreCase = true) }) Toast.makeText(this@MainActivity, peerStatus.value, Toast.LENGTH_LONG).show()
                 }
             }
         }
