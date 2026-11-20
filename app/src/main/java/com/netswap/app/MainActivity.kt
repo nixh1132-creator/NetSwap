@@ -515,8 +515,13 @@ private fun HomeScreen(
                             Text("The other person must accept before a connection can start.", color = Muted, fontSize = 11.sp)
                         }
                         Spacer(Modifier.height(12.dp))
-                        Text("Your sent requests", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink)
-                        Text("Request status and Join & connect are separate from sending a request.", color = Muted, fontSize = 11.sp)
+                        Spacer(Modifier.height(16.dp))
+                        Column(Modifier.fillMaxWidth().background(Color(0xFFECE7F7), RoundedCornerShape(18.dp)).padding(14.dp)) {
+                            Text("YOUR REQUESTS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF6756A5))
+                            Text("Sent requests & connection", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
+                            Text("Separate from sending a new request above. After approval, use Join & connect here.", color = Muted, fontSize = 11.sp)
+                            Text("${outgoing.size} sent request(s)", color = Color(0xFF6756A5), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
                         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(outgoing, key = { it.id }) { r ->
                                 RequestCard(
@@ -652,7 +657,8 @@ private fun RequestCard(
     loading: Boolean,
     onRespond: (ShareRequest, String) -> Unit,
     onDelete: (ShareRequest) -> Unit,
-    onStartTunnel: (ShareRequest) -> Unit
+    onStartTunnel: (ShareRequest) -> Unit,
+    peerStatus: String
 ) {
     Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(18.dp)).padding(14.dp)) {
         Text(title, fontWeight = FontWeight.SemiBold, color = Ink)
@@ -686,6 +692,10 @@ private fun RequestCard(
             }
             request.status == "approved" -> {
                 Text(if (incoming) "You accepted this request." else "Your request was accepted.", color = Color(0xFF3E725B), fontSize = 12.sp)
+                Column(Modifier.fillMaxWidth().background(Color(0xFFF1EEF8), RoundedCornerShape(12.dp)).padding(10.dp)) {
+                    Text("CONNECTION STATUS", color = Color(0xFF6756A5), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Text(peerStatus, color = Ink, fontSize = 11.sp)
+                }
                 val quotaAvailable = request.quotaBytes > 0L && request.usedBytes < request.quotaBytes
                 Button(
                     onClick = { onStartTunnel(request) },
