@@ -84,6 +84,7 @@ class NetSwapPeerProxyService : VpnService() {
         if (!accepted) return START_NOT_STICKY
 
         startForeground(NOTIFICATION_ID, notification("Connecting to approved NetSwap peer…"))
+        publish(false, "Starting connection — preparing secure peer link…")
         // Keep the CPU awake while this user-started foreground tunnel is moving packets.
         // The lock is released on every explicit/service teardown path.
         sessionWakeLock = getSystemService(PowerManager::class.java)
@@ -140,6 +141,7 @@ class NetSwapPeerProxyService : VpnService() {
                 request = request,
                 onState = { state ->
                     if (state == PeerConnection.PeerConnectionState.CONNECTED) {
+                        publish(false, "Peer link connected — opening secure data channel…")
                         // A WebRTC peer connection is only the transport layer. It does not
                         // prove that the receiver TUN/Hev route can reach the public internet.
                         // Keep the service inactive until the receiver's end-to-end probe passes.
@@ -201,6 +203,7 @@ class NetSwapPeerProxyService : VpnService() {
                     Thread.sleep(200)
                 }
                 check(peerController.isDataChannelOpen()) { "Peer connected, but secure data channel did not open." }
+                publish(false, "Secure data channel connected — starting Receiver VPN…")
                 val iceDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
                 while (!peerController.isIceGatheringComplete() && System.nanoTime() < iceDeadline && !stopped.get()) {
                     Thread.sleep(200)
