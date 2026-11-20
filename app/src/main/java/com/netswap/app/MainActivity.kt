@@ -173,7 +173,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestUserspaceTunnel(request: ShareRequest) {
         pendingTunnelRequestId = request.id
-        val isReceiver = prefs.getString("user_id", null) == request.receiverId
+        val isReceiver = prefs.getString("user_id", null) == request.senderId
         val prepare = if (isReceiver) VpnService.prepare(this) else null
         if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
         else {
@@ -514,27 +514,35 @@ private fun HomeScreen(
                             ) { Text(if (loading) "Sending…" else "Send request") }
                             Text("The other person must accept before a connection can start.", color = Muted, fontSize = 11.sp)
                         }
-                        Spacer(Modifier.height(12.dp))
                         Spacer(Modifier.height(16.dp))
-                        Column(Modifier.fillMaxWidth().background(Color(0xFFECE7F7), RoundedCornerShape(18.dp)).padding(14.dp)) {
-                            Text("YOUR REQUESTS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF6756A5))
-                            Text("Sent requests & connection", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
-                            Text("Separate from sending a new request above. After approval, use Join & connect here.", color = Muted, fontSize = 11.sp)
-                            Text("${outgoing.size} sent request(s)", color = Color(0xFF6756A5), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(outgoing, key = { it.id }) { r ->
-                                RequestCard(
-                                    title = "To: ${r.receiverName}",
-                                    detail = "${r.quotaBytes / (1024 * 1024)} MB • ${r.status.uppercase()}",
-                                    request = r,
-                                    incoming = false,
-                                    loading = loading,
-                                    onRespond = onRespond,
-                                    onDelete = onDelete,
-                                    onStartTunnel = onStartTunnel,
-                                    peerStatus = peerStatus
-                                )
+                        Text("Your sent requests are in the Sent tab below.", color = Muted, fontSize = 12.sp)
+                    }
+                    "sent" -> {
+                        Spacer(Modifier.height(18.dp))
+                        Text("Sent requests", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = Ink)
+                        Text("People you asked for internet. Approved requests can connect here.", color = Muted, fontSize = 13.sp)
+                        Spacer(Modifier.height(14.dp))
+                        if (outgoing.isEmpty()) {
+                            Column(Modifier.fillMaxWidth().background(White, RoundedCornerShape(20.dp)).padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("📤", fontSize = 30.sp)
+                                Text("No sent requests yet", fontWeight = FontWeight.SemiBold, color = Ink)
+                                Text("Send a request from Join and it will appear here.", color = Muted, fontSize = 12.sp)
+                            }
+                        } else {
+                            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                items(outgoing, key = { it.id }) { r ->
+                                    RequestCard(
+                                        title = "To: ${r.receiverName}",
+                                        detail = "${r.quotaBytes / (1024 * 1024)} MB • ${r.status.uppercase()}",
+                                        request = r,
+                                        incoming = false,
+                                        loading = loading,
+                                        onRespond = onRespond,
+                                        onDelete = onDelete,
+                                        onStartTunnel = onStartTunnel,
+                                        peerStatus = peerStatus
+                                    )
+                                }
                             }
                         }
                     }
@@ -629,6 +637,12 @@ private fun HomeScreen(
             NavigationBar(containerColor = White) {
                 NavigationBarItem(selected = activeTab == "home", onClick = { activeTab = "home" }, icon = { Text("⌂") }, label = { Text("Home") })
                 NavigationBarItem(selected = activeTab == "join", onClick = { activeTab = "join" }, icon = { Text("↗") }, label = { Text("Join") })
+                NavigationBarItem(
+                    selected = activeTab == "sent",
+                    onClick = { activeTab = "sent" },
+                    icon = { BadgedBox(badge = { if (outgoing.isNotEmpty()) Badge { Text(outgoing.size.toString()) } }) { Text("📤") } },
+                    label = { Text("Sent") }
+                )
                 NavigationBarItem(
                     selected = activeTab == "requests",
                     onClick = { activeTab = "requests" },
