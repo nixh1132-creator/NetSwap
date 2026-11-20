@@ -527,7 +527,8 @@ private fun HomeScreen(
                                     loading = loading,
                                     onRespond = onRespond,
                                     onDelete = onDelete,
-                                    onStartTunnel = onStartTunnel
+                                    onStartTunnel = onStartTunnel,
+                                    peerStatus = peerStatus
                                 )
                             }
                         }
@@ -554,7 +555,8 @@ private fun HomeScreen(
                                     loading = loading,
                                     onRespond = onRespond,
                                     onDelete = onDelete,
-                                    onStartTunnel = onStartTunnel
+                                    onStartTunnel = onStartTunnel,
+                                    peerStatus = peerStatus
                                 )
                             }
                         }
