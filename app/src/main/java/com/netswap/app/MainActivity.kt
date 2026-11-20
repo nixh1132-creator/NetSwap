@@ -173,7 +173,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestUserspaceTunnel(request: ShareRequest) {
         pendingTunnelRequestId = request.id
-        val isReceiver = prefs.getString("user_id", null) == request.senderId
+        val isReceiver = prefs.getString("user_id", null) == request.receiverId
         val prepare = if (isReceiver) VpnService.prepare(this) else null
         if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
         else {
