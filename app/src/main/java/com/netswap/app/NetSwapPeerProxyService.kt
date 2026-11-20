@@ -24,6 +24,9 @@ class NetSwapPeerProxyService : VpnService() {
     companion object {
         const val ACTION_START = "com.netswap.app.action.START_PEER_PROXY"
         const val ACTION_STOP = "com.netswap.app.action.STOP_PEER_PROXY"
+        const val ACTION_STATE = "com.netswap.app.action.PEER_STATE"
+        const val EXTRA_ACTIVE = "peer_active"
+        const val EXTRA_STATUS = "peer_status"
         const val EXTRA_REQUEST_ID = "request_id"
         const val EXTRA_PROXY = "proxy"
         private const val CHANNEL = "netswap_peer_proxy"
@@ -254,10 +257,10 @@ class NetSwapPeerProxyService : VpnService() {
     }
 
     private fun publish(active: Boolean, message: String) {
-        val state = Intent(NetSwapUserspaceVpnService.ACTION_STATE)
+        val state = Intent(ACTION_STATE)
             .setPackage(packageName)
-            .putExtra(NetSwapUserspaceVpnService.EXTRA_ACTIVE, active)
-            .putExtra(NetSwapUserspaceVpnService.EXTRA_ERROR, message)
+            .putExtra(EXTRA_ACTIVE, active)
+            .putExtra(EXTRA_STATUS, message)
         sendBroadcast(state)
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, notification(message))

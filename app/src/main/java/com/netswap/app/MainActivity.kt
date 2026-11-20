@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
             }
     }
     private val vpnState = mutableStateOf(false)
+    private val peerStatus = mutableStateOf("Ready — no active peer connection.")
     private val vpnStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
@@ -85,6 +86,11 @@ class MainActivity : ComponentActivity() {
                 NetSwapUserspaceVpnService.ACTION_STATE -> {
                     vpnState.value = intent.getBooleanExtra(NetSwapUserspaceVpnService.EXTRA_ACTIVE, false)
                     intent.getStringExtra(NetSwapUserspaceVpnService.EXTRA_ERROR)?.let { Toast.makeText(this@MainActivity, it, Toast.LENGTH_LONG).show() }
+                }
+                NetSwapPeerProxyService.ACTION_STATE -> {
+                    vpnState.value = intent.getBooleanExtra(NetSwapPeerProxyService.EXTRA_ACTIVE, false)
+                    peerStatus.value = intent.getStringExtra(NetSwapPeerProxyService.EXTRA_STATUS) ?: "Connection status unavailable."
+                    if (!vpnState.value) Toast.makeText(this@MainActivity, peerStatus.value, Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -167,7 +173,8 @@ class MainActivity : ComponentActivity() {
 
     private fun requestUserspaceTunnel(request: ShareRequest) {
         pendingTunnelRequestId = request.id
-        val prepare = VpnService.prepare(this)
+        val isReceiver = prefs.getString("user_id", null) == request.senderId
+        val prepare = if (isReceiver) VpnService.prepare(this) else null
         if (prepare != null) userspaceVpnPermissionLauncher.launch(prepare)
         else {
             pendingTunnelRequestId = null
@@ -188,6 +195,7 @@ class MainActivity : ComponentActivity() {
         val stateFilter = IntentFilter().apply {
             addAction(NetSwapVpnService.ACTION_STATE)
             addAction(NetSwapUserspaceVpnService.ACTION_STATE)
+            addAction(NetSwapPeerProxyService.ACTION_STATE)
         }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(vpnStateReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED)
@@ -212,6 +220,7 @@ class MainActivity : ComponentActivity() {
                 var loading by remember { mutableStateOf(false) }
                 var message by remember { mutableStateOf("") }
                 var vpnActive by vpnState
+                var livePeerStatus by peerStatus
 
                 fun saveSession(s: AuthSession) {
                     prefs.edit().putString("access_token", s.accessToken).putString("refresh_token", s.refreshToken)
@@ -279,6 +288,7 @@ class MainActivity : ComponentActivity() {
                         onSaveName = { name -> lifecycleScope.launch { loading = true; try { withContext(Dispatchers.IO) { NetSwapApi.updateDisplayName(session!!, name) }; displayName = name.trim(); message = "Username saved." } catch (e: Exception) { message = e.message ?: "Username save failed." }; loading = false } },
                         onDelete = { request -> lifecycleScope.launch { loading = true; try { withContext(Dispatchers.IO) { NetSwapApi.deleteRequest(session!!, request.id) }; loadHome(session!!) } catch (e: Exception) { message = e.message ?: "Request delete failed."; loading = false } } },
                         vpnActive = vpnActive,
+                        peerStatus = livePeerStatus,
                         onVpnSetup = { startVpnWithNotificationPermission() },
                         onVpnDisconnect = { disconnectVpnService(); vpnActive = false },
                         onSend = { friendUid, quota ->
@@ -354,6 +364,7 @@ private fun HomeScreen(
     loading: Boolean,
     message: String,
     vpnActive: Boolean,
+    peerStatus: String,
     onRefresh: () -> Unit,
     onSaveName: (String) -> Unit,
     onDelete: (ShareRequest) -> Unit,
@@ -505,6 +516,7 @@ private fun HomeScreen(
                         }
                         Spacer(Modifier.height(12.dp))
                         Text("Your sent requests", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink)
+                        Text("Request status and Join & connect are separate from sending a request.", color = Muted, fontSize = 11.sp)
                         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(outgoing, key = { it.id }) { r ->
                                 RequestCard(
@@ -556,7 +568,7 @@ private fun HomeScreen(
                             Text("NETSWAP CONNECTION", color = Color(0xFFD7CFF7), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
                             Text(if (vpnActive) "Connected" else "Ready when you are", color = White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
-                            Text(if (vpnActive) "Your tunnel service is running." else "Choose whether to share your internet or join a friend.", color = Color(0xFFE1DDED), fontSize = 12.sp)
+                            Text(peerStatus, color = Color(0xFFE1DDED), fontSize = 12.sp)
                             Spacer(Modifier.height(14.dp))
                             Button(
                                 onClick = { if (vpnActive) onVpnDisconnect() else onRefresh() },
