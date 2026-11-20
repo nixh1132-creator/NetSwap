@@ -9,6 +9,7 @@ import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import org.webrtc.PeerConnection
 import java.util.concurrent.Executors
 import java.util.concurrent.CountDownLatch
@@ -41,6 +42,7 @@ class NetSwapPeerProxyService : VpnService() {
     @Volatile private var hevPair: HevPacketSocketPair? = null
     @Volatile private var hevRelay: HevTunPacketRelay? = null
     @Volatile private var usageReporter: SessionUsageReporter? = null
+    @Volatile private var sessionWakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = super.onBind(intent)
 
@@ -79,6 +81,11 @@ class NetSwapPeerProxyService : VpnService() {
         if (!accepted) return START_NOT_STICKY
 
         startForeground(NOTIFICATION_ID, notification("Connecting to approved NetSwap peer…"))
+        // Keep the CPU awake while this user-started foreground tunnel is moving packets.
+        // The lock is released on every explicit/service teardown path.
+        sessionWakeLock = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:NetSwapPeerSession")
+            .apply { setReferenceCounted(false); acquire() }
         worker.execute {
             try {
                 startPeer(requestId)
@@ -271,6 +278,8 @@ class NetSwapPeerProxyService : VpnService() {
 
     private fun stopPeer() {
         if (!stopped.compareAndSet(false, true)) return
+        try { sessionWakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
+        sessionWakeLock = null
         try { usageReporter?.close() } catch (_: Exception) {}
         usageReporter = null
         try { controller?.close() } catch (_: Exception) {}
@@ -288,6 +297,12 @@ class NetSwapPeerProxyService : VpnService() {
         try { endpoint?.close() } catch (_: Exception) {}
         endpoint = null
         publish(false, "NetSwap peer session stopped.")
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Removing the app task is not a disconnect request. Keep the foreground
+        // peer service and its ongoing notification alive until the user stops it.
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onRevoke() {
