@@ -147,7 +147,7 @@ class NetSwapPeerProxyService : VpnService() {
                         // Keep the service inactive until the receiver's end-to-end probe passes.
                         peerConnected.countDown()
                     } else if (state == PeerConnection.PeerConnectionState.FAILED) {
-                        publish(false, "Peer connection failed. Check both phones' internet and TURN connectivity.")
+                        // WebRtcPeerLink reports the detailed ICE candidate diagnostics via onError.
                     }
                     // DISCONNECTED can be a transient ICE state during network handover.
                     // Do not tear down/report failure until WebRTC reaches FAILED.
