@@ -29,6 +29,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -403,7 +405,10 @@ private fun HomeScreen(
                 }
             }
 
-            Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)) {
+            Column(
+                Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)
+                    .then(if (activeTab == "requests" || activeTab == "sent") Modifier else Modifier.verticalScroll(rememberScrollState()))
+            ) {
                 when (activeTab) {
                     "profile" -> {
                         Spacer(Modifier.height(18.dp))
