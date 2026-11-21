@@ -11,6 +11,7 @@ import org.webrtc.SdpObserver
 import java.nio.ByteBuffer
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * WebRTC DataChannel transport for the P2P leg.
@@ -31,6 +32,9 @@ class WebRtcPeerLink(
     private val closed = AtomicBoolean(false)
     private val dataChannelReady = AtomicBoolean(false)
     private val turnRelayCandidateFound = AtomicBoolean(false)
+    private val hostCandidateCount = AtomicInteger(0)
+    private val srflxCandidateCount = AtomicInteger(0)
+    private val relayCandidateCount = AtomicInteger(0)
     private val iceGatheringComplete = AtomicBoolean(false)
     private val config = PeerConnection.RTCConfiguration(iceServers).apply {
         sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
@@ -43,7 +47,11 @@ class WebRtcPeerLink(
 
     private val observer = object : PeerConnection.Observer {
         override fun onSignalingChange(state: PeerConnection.SignalingState) {}
-        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {}
+        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
+            if (state == PeerConnection.IceConnectionState.FAILED) {
+                onError("ICE transport failed. Candidates gathered: host=${hostCandidateCount.get()}, srflx=${srflxCandidateCount.get()}, relay=${relayCandidateCount.get()}. Check TURN credentials, UDP/TCP reachability, and peer signaling.")
+            }
+        }
         override fun onStandardizedIceConnectionChange(state: PeerConnection.IceConnectionState) {}
         override fun onConnectionChange(state: PeerConnection.PeerConnectionState) { onState(state) }
         override fun onIceConnectionReceivingChange(receiving: Boolean) {}
@@ -51,7 +59,14 @@ class WebRtcPeerLink(
             if (state == PeerConnection.IceGatheringState.COMPLETE) iceGatheringComplete.set(true)
         }
         override fun onIceCandidate(candidate: IceCandidate) {
-            if (candidate.sdp.contains(" typ relay", ignoreCase = true)) turnRelayCandidateFound.set(true)
+            when {
+                candidate.sdp.contains(" typ relay", ignoreCase = true) -> {
+                    turnRelayCandidateFound.set(true)
+                    relayCandidateCount.incrementAndGet()
+                }
+                candidate.sdp.contains(" typ srflx", ignoreCase = true) -> srflxCandidateCount.incrementAndGet()
+                candidate.sdp.contains(" typ host", ignoreCase = true) -> hostCandidateCount.incrementAndGet()
+            }
             onSignal("ice", JSONObject()
                 .put("sdp", candidate.sdp)
                 .put("sdp_mid", candidate.sdpMid)
