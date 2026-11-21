@@ -711,10 +711,7 @@ private fun RequestCard(
             }
             request.status == "approved" -> {
                 Text(if (incoming) "You accepted this request." else "Your request was accepted.", color = Color(0xFF3E725B), fontSize = 12.sp)
-                Column(Modifier.fillMaxWidth().background(Color(0xFFF1EEF8), RoundedCornerShape(12.dp)).padding(10.dp)) {
-                    Text("CONNECTION STATUS", color = Color(0xFF6756A5), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    Text(peerStatus, color = Ink, fontSize = 11.sp)
-                }
+                ConnectionMonitorCard(peerStatus)
                 val quotaAvailable = request.quotaBytes > 0L && request.usedBytes < request.quotaBytes
                 Button(
                     onClick = { onStartTunnel(request) },
@@ -732,6 +729,58 @@ private fun RequestCard(
             }
             request.status == "pending" && !incoming -> TextButton(onClick = { onRespond(request, "cancelled") }, enabled = !loading) { Text("Cancel request") }
             request.status in listOf("rejected", "cancelled") -> TextButton(onClick = { onDelete(request) }, enabled = !loading) { Text("Delete request") }
+        }
+    }
+}
+
+
+@Composable
+private fun ConnectionMonitorCard(status: String) {
+    val normalized = status.lowercase()
+    val failed = listOf("failed", "could not", "unable", "error", "not found", "timed out", "timeout", "required", "cancelled", "needs an active", "probe failed").any { normalized.contains(it) }
+    val connected = normalized.contains("vpn tunnel is running") || normalized.contains("internet probe passed")
+    val stages = listOf(
+        "Preparing secure connection" to listOf("starting connection", "preparing secure", "connecting"),
+        "Peer / ICE connection" to listOf("peer link", "ice", "peer did not connect"),
+        "Secure data channel" to listOf("data channel"),
+        "Receiver VPN + packet tunnel" to listOf("vpn", "hev", "packet tunnel"),
+        "Internet connectivity test" to listOf("internet", "probe")
+    )
+    val current = stages.indexOfLast { (_, keys) -> keys.any { normalized.contains(it) } }.coerceAtLeast(0)
+    val cardColor = when {
+        failed -> Color(0xFFFFEFED)
+        connected -> Color(0xFFEAF6EF)
+        else -> Color(0xFFF1EEF8)
+    }
+    val accent = when {
+        failed -> Color(0xFFB6423A)
+        connected -> Color(0xFF347653)
+        else -> Color(0xFF6756A5)
+    }
+    Column(Modifier.fillMaxWidth().background(cardColor, RoundedCornerShape(12.dp)).padding(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("LIVE CONNECTION MONITOR", color = accent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            Text(when { failed -> "FAILED"; connected -> "CONNECTED"; else -> "IN PROGRESS" }, color = accent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(status, color = Ink, fontSize = 12.sp)
+        Spacer(Modifier.height(9.dp))
+        stages.forEachIndexed { index, stage ->
+            val done = connected || (!failed && index < current)
+            val active = !failed && !connected && index == current
+            val marker = when { failed && index == current -> "✕"; done -> "✓"; active -> "●"; else -> "○" }
+            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(marker, color = if (failed && index == current) Color(0xFFB6423A) else if (done) Color(0xFF347653) else if (active) accent else Muted, fontSize = 12.sp)
+                Spacer(Modifier.width(8.dp))
+                Text(stage.first, color = if (done || active || (failed && index == current)) Ink else Muted, fontSize = 10.sp, fontWeight = if (active || (failed && index == current)) FontWeight.SemiBold else FontWeight.Normal)
+            }
+        }
+        if (failed) {
+            Spacer(Modifier.height(6.dp))
+            Text("Failure detail is shown above. Check both phones' internet, sign-in and TURN/ICE network access before retrying.", color = accent, fontSize = 10.sp)
+        } else if (connected) {
+            Spacer(Modifier.height(4.dp))
+            Text("Internet probe passed. Peer transport and receiver tunnel are active.", color = accent, fontSize = 10.sp)
         }
     }
 }
