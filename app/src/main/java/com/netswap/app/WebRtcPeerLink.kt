@@ -39,6 +39,10 @@ class WebRtcPeerLink(
     private val config = PeerConnection.RTCConfiguration(iceServers).apply {
         sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+        // NetSwap is intended to work across carrier NATs and distant networks.
+        // Prefer authenticated TURN relays instead of allowing a misleading
+        // host/srflx-only path that often cannot connect across mobile operators.
+        iceTransportsType = PeerConnection.IceTransportsType.RELAY
     }
     private var channel: DataChannel? = null
     private val pendingIceCandidates = mutableListOf<IceCandidate>()
