@@ -225,8 +225,12 @@ class NetSwapPeerProxyService : VpnService() {
             if (!stopped.get()) peerController.start()
             else peerController.close()
         } catch (failure: Exception) {
-            publish(false, failure.message ?: "Peer connection could not start.")
-            stopPeer()
+            // Preserve the actionable failure instead of overwriting it with
+            // "session stopped" during cleanup.
+            val reason = failure.message?.take(220) ?: "Peer connection could not start."
+            stopPeer(publishStopped = false)
+            publish(false, reason)
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
@@ -282,7 +286,7 @@ class NetSwapPeerProxyService : VpnService() {
             .setContentIntent(open).setOngoing(true).build()
     }
 
-    private fun stopPeer() {
+    private fun stopPeer(publishStopped: Boolean = true) {
         if (!stopped.compareAndSet(false, true)) return
         try { sessionWakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
         sessionWakeLock = null
@@ -302,7 +306,7 @@ class NetSwapPeerProxyService : VpnService() {
         proxy = null
         try { endpoint?.close() } catch (_: Exception) {}
         endpoint = null
-        publish(false, "NetSwap peer session stopped.")
+        if (publishStopped) publish(false, "NetSwap peer session stopped.")
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
