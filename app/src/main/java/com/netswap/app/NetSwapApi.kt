@@ -2,7 +2,12 @@ package com.netswap.app
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.net.URLEncoder
 import java.net.URL
 
@@ -15,30 +20,52 @@ object NetSwapApi {
     private val base = BuildConfig.SUPABASE_URL
     private val apiKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY
 
+    /**
+     * Retries only transient transport failures. HTTP/API errors are returned immediately,
+     * so authentication and policy failures are never hidden by retries.
+     */
     private fun call(path: String, method: String, token: String? = null, body: JSONObject? = null, prefer: String? = null): String {
-        val c = URL(base + path).openConnection() as HttpURLConnection
-        try {
-            c.requestMethod = method
-            c.connectTimeout = 15000
-            c.readTimeout = 20000
-            c.setRequestProperty("apikey", apiKey)
-            c.setRequestProperty("Content-Type", "application/json")
-            c.setRequestProperty("Accept", "application/json")
-            if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
-            if (prefer != null) c.setRequestProperty("Prefer", prefer)
-            if (body != null) {
-                c.doOutput = true
-                c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+        var lastFailure: IOException? = null
+        for (attempt in 0..2) {
+            val c = URL(base + path).openConnection() as HttpURLConnection
+            try {
+                c.requestMethod = method
+                c.connectTimeout = 20000
+                c.readTimeout = 25000
+                c.setRequestProperty("Connection", "close")
+                c.setRequestProperty("apikey", apiKey)
+                c.setRequestProperty("Content-Type", "application/json")
+                c.setRequestProperty("Accept", "application/json")
+                if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
+                if (prefer != null) c.setRequestProperty("Prefer", prefer)
+                if (body != null) {
+                    c.doOutput = true
+                    c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                }
+                val code = c.responseCode
+                val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (code !in 200..299) {
+                    val j = try { JSONObject(text) } catch (_: Exception) { JSONObject() }
+                    val msg = j.optString("msg").ifBlank { j.optString("message").ifBlank { j.optString("error_description").ifBlank { j.optString("error").ifBlank { "Request failed ($code)" } } } }
+                    throw IllegalStateException("$msg (HTTP $code)")
+                }
+                return text
+            } catch (failure: IOException) {
+                lastFailure = failure
+                val retryable = failure is ConnectException ||
+                    failure is SocketTimeoutException ||
+                    failure is UnknownHostException ||
+                    failure is NoRouteToHostException
+                if (!retryable || attempt == 2) throw failure
+                try { Thread.sleep(500L * (attempt + 1)) } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw IOException("Network retry interrupted.", interrupted)
+                }
+            } finally {
+                c.disconnect()
             }
-            val code = c.responseCode
-            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) {
-                val j = try { JSONObject(text) } catch (_: Exception) { JSONObject() }
-                val msg = j.optString("msg").ifBlank { j.optString("message").ifBlank { j.optString("error_description").ifBlank { j.optString("error").ifBlank { "Request failed ($code)" } } } }
-                throw IllegalStateException("$msg (HTTP $code)")
-            }
-            return text
-        } finally { c.disconnect() }
+        }
+        throw lastFailure ?: IOException("Network request failed.")
     }
 
     fun signUp(email: String, password: String): JSONObject =
