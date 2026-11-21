@@ -35,7 +35,7 @@ object NetSwapApi {
             if (code !in 200..299) {
                 val j = try { JSONObject(text) } catch (_: Exception) { JSONObject() }
                 val msg = j.optString("msg").ifBlank { j.optString("message").ifBlank { j.optString("error_description").ifBlank { j.optString("error").ifBlank { "Request failed ($code)" } } } }
-                throw IllegalStateException(msg)
+                throw IllegalStateException("$msg (HTTP $code)")
             }
             return text
         } finally { c.disconnect() }
