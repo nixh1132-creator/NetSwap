@@ -52,10 +52,22 @@ object NetSwapApi {
                 return text
             } catch (failure: IOException) {
                 lastFailure = failure
+                // Android's HttpURLConnection (OkHttp-backed on Android) can
+                // surface a dropped response body as a plain IOException:
+                // "unexpected end of stream". Treat only known mid-stream transport
+                // closures as transient; do not retry arbitrary I/O or TLS failures.
+                val detail = generateSequence<Throwable>(failure) { it.cause }
+                    .joinToString(" ") { it.message.orEmpty().lowercase() }
                 val retryable = failure is ConnectException ||
                     failure is SocketTimeoutException ||
                     failure is UnknownHostException ||
-                    failure is NoRouteToHostException
+                    failure is NoRouteToHostException ||
+                    failure is java.io.EOFException ||
+                    failure is java.net.SocketException ||
+                    detail.contains("unexpected end of stream") ||
+                    detail.contains("connection reset") ||
+                    detail.contains("stream was reset") ||
+                    detail.contains("unexpected eof")
                 if (!retryable || attempt == 2) throw failure
                 try { Thread.sleep(500L * (attempt + 1)) } catch (interrupted: InterruptedException) {
                     Thread.currentThread().interrupt()
