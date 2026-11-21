@@ -29,7 +29,36 @@ class WebRtcSessionController(
     private val onError: (String) -> Unit
 ) : AutoCloseable {
     private val appContext = context.applicationContext
+    @Volatile private var activeSession: AuthSession = session
+    private val sessionRefreshLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Retry authenticated signaling once after refreshing an expired/rejected access token. */
+    private fun <T> withFreshSession(block: (AuthSession) -> T): T {
+        val current = activeSession
+        try {
+            return block(current)
+        } catch (failure: Exception) {
+            val message = failure.message.orEmpty()
+            val authRejected = message.contains("401") ||
+                message.contains("JWT", ignoreCase = true) ||
+                message.contains("PGRST303", ignoreCase = true)
+            if (!authRejected) throw failure
+            val refreshed = synchronized(sessionRefreshLock) {
+                if (activeSession.accessToken == current.accessToken) {
+                    val next = NetSwapApi.refresh(current.refreshToken)
+                    activeSession = next
+                    appContext.getSharedPreferences("netswap_session", Context.MODE_PRIVATE)
+                        .edit()
+                        .putString("access_token", next.accessToken)
+                        .putString("refresh_token", next.refreshToken)
+                        .apply()
+                }
+                activeSession
+            }
+            return block(refreshed)
+        }
+    }
     private val closed = AtomicBoolean(false)
     private val seenSignals = Collections.synchronizedSet(mutableSetOf<String>())
     private val offerHandled = AtomicBoolean(false)
@@ -53,7 +82,7 @@ class WebRtcSessionController(
             )
             val peerFactory = PeerConnectionFactory.builder().createPeerConnectionFactory()
             factory = peerFactory
-            val iceJson = NetSwapApi.peerIceServers(session)
+            val iceJson = withFreshSession { fresh -> NetSwapApi.peerIceServers(fresh) }
             val ice = buildList {
                 for (index in 0 until iceJson.length()) {
                     val item = iceJson.getJSONObject(index)
@@ -85,7 +114,7 @@ class WebRtcSessionController(
                 onSignal = { type, payload ->
                     scope.launch {
                         runCatching {
-                            NetSwapApi.sendPeerSignal(session, request.id, peerUserId, type, payload)
+                            withFreshSession { fresh -> NetSwapApi.sendPeerSignal(fresh, request.id, peerUserId, type, payload) }
                         }.onFailure { onError(it.message ?: "Could not send peer signal.") }
                     }
                 },
@@ -136,7 +165,7 @@ class WebRtcSessionController(
             pollJob = scope.launch {
                 while (isActive && !closed.get()) {
                     try {
-                        val incoming = NetSwapApi.pendingPeerSignals(session, request.id)
+                        val incoming = withFreshSession { fresh -> NetSwapApi.pendingPeerSignals(fresh, request.id) }
                         incoming.forEach { signal ->
                             if (signal.fromUserId != peerUserId || !seenSignals.add(signal.id)) return@forEach
                             when (signal.type) {
