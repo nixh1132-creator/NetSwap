@@ -26,7 +26,7 @@ object NetSwapApi {
      */
     private fun call(path: String, method: String, token: String? = null, body: JSONObject? = null, prefer: String? = null): String {
         var lastFailure: IOException? = null
-        for (attempt in 0..2) {
+        for (attempt in 0..4) {
             val c = URL(base + path).openConnection() as HttpURLConnection
             try {
                 c.requestMethod = method
@@ -68,8 +68,16 @@ object NetSwapApi {
                     detail.contains("connection reset") ||
                     detail.contains("stream was reset") ||
                     detail.contains("unexpected eof")
-                if (!retryable || attempt == 2) throw failure
-                try { Thread.sleep(500L * (attempt + 1)) } catch (interrupted: InterruptedException) {
+                if (!retryable || attempt == 4) {
+                    val reason = when (failure) {
+                        is UnknownHostException -> "DNS lookup failed. Check the phone's internet and private DNS."
+                        is SocketTimeoutException -> "Supabase did not respond before timeout. Check network access and retry."
+                        is ConnectException, is NoRouteToHostException -> "Could not reach Supabase over HTTPS (443). The phone network or route may be blocking the connection."
+                        else -> "Network connection to Supabase failed after 5 attempts: ${failure.message ?: failure.javaClass.simpleName}"
+                    }
+                    throw IOException(reason, failure)
+                }
+                try { Thread.sleep(700L * (attempt + 1)) } catch (interrupted: InterruptedException) {
                     Thread.currentThread().interrupt()
                     throw IOException("Network retry interrupted.", interrupted)
                 }
@@ -127,6 +135,9 @@ object NetSwapApi {
     }
 
     fun sendRequest(session: AuthSession, receiverId: String, quotaBytes: Long) {
+        require(receiverId != session.userId) { "You cannot send an internet request to your own NetSwap ID." }
+        val duplicate = requests(session).any { it.senderId == session.userId && it.receiverId == receiverId && it.status in setOf("pending", "approved") }
+        check(!duplicate) { "An active request already exists for this friend. Open Sent to manage that request instead of creating a duplicate." }
         call("/rest/v1/sharing_requests", "POST", session.accessToken,
             JSONObject().put("sender_id", session.userId).put("receiver_id", receiverId).put("quota_bytes", quotaBytes),
             "return=minimal")
