@@ -737,16 +737,29 @@ private fun RequestCard(
 @Composable
 private fun ConnectionMonitorCard(status: String) {
     val normalized = status.lowercase()
-    val failed = listOf("failed", "could not", "unable", "error", "not found", "timed out", "timeout", "required", "cancelled", "needs an active", "probe failed").any { normalized.contains(it) }
     val connected = normalized.contains("vpn tunnel is running") || normalized.contains("internet probe passed")
+    val failed = listOf("failed", "could not", "unable", "error", "not found", "timed out", "timeout", "required", "cancelled", "needs an active", "probe failed").any { normalized.contains(it) }
+    data class Stage(val title: String, val hint: String, val keys: List<String>)
     val stages = listOf(
-        "Preparing secure connection" to listOf("starting connection", "preparing secure", "connecting"),
-        "Peer / ICE connection" to listOf("peer link", "ice", "peer did not connect"),
-        "Secure data channel" to listOf("data channel"),
-        "Receiver VPN + packet tunnel" to listOf("vpn", "hev", "packet tunnel"),
-        "Internet connectivity test" to listOf("internet", "probe")
+        Stage("Account & request check", "Sign-in session and approved request", listOf("starting connection", "checking approved", "please log in", "approved sharing request")),
+        Stage("Provider internet", "Mobile data / Wi-Fi upstream availability", listOf("provider internet", "upstream network", "provider phone needs", "enable mobile data")),
+        Stage("TCP/UDP proxy setup", "Preparing local proxy and stream handlers", listOf("tcp/udp proxy", "receiver tcp", "proxy", "socks5")),
+        Stage("Peer signaling & ICE", "Exchanging offer, answer and network candidates", listOf("signaling", "ice", "peer link", "peer did not connect")),
+        Stage("Secure data channel", "Opening encrypted peer data channel", listOf("data channel")),
+        Stage("Android VPN interface", "Creating receiver VPN interface and routes", listOf("vpn interface", "android vpn", "receiver vpn")),
+        Stage("Hev packet tunnel", "Forwarding VPN packets into the proxy", listOf("hev", "packet tunnel")),
+        Stage("Real internet probe", "Testing an HTTP request through provider internet", listOf("internet probe", "internet traffic", "peer data path", "http response")),
+        Stage("Traffic & quota", "Counting transferred bytes against approved limit", listOf("traffic", "quota", "sharing active"))
     )
-    val current = stages.indexOfLast { (_, keys) -> keys.any { normalized.contains(it) } }.coerceAtLeast(0)
+    val current = when {
+        connected -> stages.lastIndex
+        else -> stages.indexOfLast { stage -> stage.keys.any { normalized.contains(it) } }.coerceAtLeast(0)
+    }
+    val percent = when {
+        connected -> 100
+        failed -> ((current * 100) / stages.size).coerceIn(0, 99)
+        else -> ((current * 100) / stages.size).coerceIn(0, 99)
+    }
     val cardColor = when {
         failed -> Color(0xFFFFEFED)
         connected -> Color(0xFFEAF6EF)
@@ -762,25 +775,48 @@ private fun ConnectionMonitorCard(status: String) {
             Text("LIVE CONNECTION MONITOR", color = accent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
             Text(when { failed -> "FAILED"; connected -> "CONNECTED"; else -> "IN PROGRESS" }, color = accent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
         }
-        Spacer(Modifier.height(6.dp))
-        Text(status, color = Ink, fontSize = 12.sp)
-        Spacer(Modifier.height(9.dp))
+        Spacer(Modifier.height(7.dp))
+        Text(status, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(if (connected) "All stages complete" else "Step ${(current + 1).coerceAtMost(stages.size)} of ${stages.size}", color = Muted, fontSize = 10.sp)
+            Text("${percent}% complete", color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
+        LinearProgressIndicator(
+            progress = { percent / 100f },
+            modifier = Modifier.fillMaxWidth().height(6.dp),
+            color = accent,
+            trackColor = White
+        )
+        Spacer(Modifier.height(8.dp))
         stages.forEachIndexed { index, stage ->
             val done = connected || (!failed && index < current)
             val active = !failed && !connected && index == current
-            val marker = when { failed && index == current -> "✕"; done -> "✓"; active -> "●"; else -> "○" }
-            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(marker, color = if (failed && index == current) Color(0xFFB6423A) else if (done) Color(0xFF347653) else if (active) accent else Muted, fontSize = 12.sp)
-                Spacer(Modifier.width(8.dp))
-                Text(stage.first, color = if (done || active || (failed && index == current)) Ink else Muted, fontSize = 10.sp, fontWeight = if (active || (failed && index == current)) FontWeight.SemiBold else FontWeight.Normal)
+            val isFailed = failed && index == current
+            val marker = when { isFailed -> "✕"; done -> "✓"; active -> "●"; else -> "○" }
+            Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(marker, color = if (isFailed) Color(0xFFB6423A) else if (done) Color(0xFF347653) else if (active) accent else Muted, fontSize = 12.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stage.title, color = if (done || active || isFailed) Ink else Muted, fontSize = 10.sp, fontWeight = if (active || isFailed) FontWeight.SemiBold else FontWeight.Normal)
+                    if (isFailed) {
+                        Spacer(Modifier.weight(1f))
+                        Text("FAILED HERE", color = accent, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                if (active || isFailed) {
+                    Text(stage.hint, color = if (isFailed) accent else Muted, fontSize = 9.sp, modifier = Modifier.padding(start = 20.dp, top = 1.dp))
+                }
             }
         }
         if (failed) {
             Spacer(Modifier.height(6.dp))
-            Text("Failure detail is shown above. Check both phones' internet, sign-in and TURN/ICE network access before retrying.", color = accent, fontSize = 10.sp)
+            Text("Failure point is marked above. The full error is shown at the top; completed steps are kept separate from the failed step.", color = accent, fontSize = 10.sp)
         } else if (connected) {
             Spacer(Modifier.height(4.dp))
-            Text("Internet probe passed. Peer transport and receiver tunnel are active.", color = accent, fontSize = 10.sp)
+            Text("End-to-end internet probe passed. Traffic usage and quota tracking are active.", color = accent, fontSize = 10.sp)
+        } else {
+            Text("Progress updates as each setup stage reports back. A connected peer alone does not count as working internet.", color = Muted, fontSize = 9.sp)
         }
     }
 }
