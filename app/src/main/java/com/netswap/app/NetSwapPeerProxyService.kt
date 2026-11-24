@@ -211,7 +211,9 @@ class NetSwapPeerProxyService : VpnService() {
                 startReceiverDeviceTunnel(info.port)
                 // Verify a real TCP request crosses SOCKS5 -> WebRTC -> provider upstream.
                 // A gathered TURN candidate alone is not proof that relay traffic is selected.
-                publish(true, "VPN interface started; checking real internet traffic…")
+                // Do not advertise an active tunnel until a real request has
+                // crossed SOCKS5 -> WebRTC -> provider upstream successfully.
+                publish(false, "VPN interface started; verifying real internet traffic…")
                 val probe = PeerTunnelConnectivityProbe.check(info.port)
                 check(probe.success) { "Peer data path connected, but internet probe failed: ${probe.detail}" }
                 val routeStatus = if (peerController.hasTurnRelayCandidate()) {
