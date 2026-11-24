@@ -587,7 +587,14 @@ private fun HomeScreen(
                         Column(Modifier.fillMaxWidth().background(Color(0xFF29233F), RoundedCornerShape(24.dp)).padding(19.dp)) {
                             Text("NETSWAP CONNECTION", color = Color(0xFFD7CFF7), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
-                            Text(if (vpnActive) "Connected" else "Ready when you are", color = White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                when {
+                                    vpnActive -> "Connected"
+                                    listOf("failed", "could not", "unable", "error", "timed out", "timeout").any { peerStatus.contains(it, ignoreCase = true) } -> "Connection needs attention"
+                                    else -> "Ready when you are"
+                                },
+                                color = White, fontSize = 23.sp, fontWeight = FontWeight.Bold
+                            )
                             Text(peerStatus, color = Color(0xFFE1DDED), fontSize = 12.sp)
                             Spacer(Modifier.height(14.dp))
                             Button(
