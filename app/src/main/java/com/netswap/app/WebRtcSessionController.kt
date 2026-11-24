@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.UUID
 
 /**
  * Owns signaling, WebRTC data transport, stream framing, and the attached
@@ -63,6 +64,7 @@ class WebRtcSessionController(
     private val seenSignals = Collections.synchronizedSet(mutableSetOf<String>())
     private val offerHandled = AtomicBoolean(false)
     private val answerHandled = AtomicBoolean(false)
+    @Volatile private var negotiationId: String? = null
     private val peerUserId = if (session.userId == request.senderId) request.receiverId else request.senderId
     private val isOfferer = session.userId == request.senderId
     private var link: WebRtcPeerLink? = null
@@ -112,6 +114,8 @@ class WebRtcSessionController(
                 factory = peerFactory,
                 iceServers = ice,
                 onSignal = { type, payload ->
+                    // Tag every SDP/ICE packet so retries cannot mix old candidates.
+                    negotiationId?.let { payload.put("negotiation_id", it) }
                     scope.launch {
                         runCatching {
                             withFreshSession { fresh -> NetSwapApi.sendPeerSignal(fresh, request.id, peerUserId, type, payload) }
@@ -158,6 +162,7 @@ class WebRtcSessionController(
             incomingBridge = bridge
             streamBridge = bridge
             if (isOfferer) {
+                negotiationId = UUID.randomUUID().toString()
                 peerLink.createOffer().whenComplete { _, error ->
                     if (error != null) onError(error.message ?: "Could not create peer offer.")
                 }
@@ -168,20 +173,22 @@ class WebRtcSessionController(
                         val incoming = withFreshSession { fresh -> NetSwapApi.pendingPeerSignals(fresh, request.id) }
                         incoming.forEach { signal ->
                             if (signal.fromUserId != peerUserId || !seenSignals.add(signal.id)) return@forEach
+                            val signalNegotiationId = signal.payload.optString("negotiation_id")
                             when (signal.type) {
-                                "offer" -> if (!isOfferer && offerHandled.compareAndSet(false, true)) {
+                                "offer" -> if (!isOfferer && signalNegotiationId.isNotBlank() && offerHandled.compareAndSet(false, true)) {
+                                    negotiationId = signalNegotiationId
                                     val sdp = signal.payload.optString("sdp")
                                     if (sdp.isNotBlank()) peerLink.acceptOffer(sdp).whenComplete { _, error ->
                                         if (error != null) onError(error.message ?: "Could not accept peer offer.")
                                     }
                                 }
-                                "answer" -> if (isOfferer && answerHandled.compareAndSet(false, true)) {
+                                "answer" -> if (isOfferer && signalNegotiationId.isNotBlank() && signalNegotiationId == negotiationId && answerHandled.compareAndSet(false, true)) {
                                     val sdp = signal.payload.optString("sdp")
                                     if (sdp.isNotBlank()) peerLink.acceptAnswer(sdp).whenComplete { _, error ->
                                         if (error != null) onError(error.message ?: "Could not accept peer answer.")
                                     }
                                 }
-                                "ice" -> peerLink.addIceCandidate(signal.payload)
+                                "ice" -> if (signalNegotiationId.isNotBlank() && signalNegotiationId == negotiationId) peerLink.addIceCandidate(signal.payload)
                                 "hangup" -> close()
                             }
                         }
