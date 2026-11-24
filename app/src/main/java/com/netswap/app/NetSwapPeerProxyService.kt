@@ -128,6 +128,7 @@ class NetSwapPeerProxyService : VpnService() {
                     .putString("refresh_token", session.refreshToken).apply()
                 NetSwapApi.requests(session)
             }
+            publish(false, "Checking approved sharing request…")
             val request = requestList.firstOrNull {
                 it.id == requestId && it.status == "approved" &&
                     (it.senderId == session.userId || it.receiverId == session.userId)
@@ -160,8 +161,9 @@ class NetSwapPeerProxyService : VpnService() {
             // The request creator is the receiver of internet. The person whose UID was
             // entered receives the request and is the cellular-data provider.
             if (session.userId == request.receiverId) {
+                publish(false, "Checking provider internet and selecting upstream network…")
                 val network = CellularUpstreamNetwork.find(this)
-                    ?: error("Provider phone needs an active internet connection (mobile data, Wi-Fi, or hotspot).")
+                    ?: error("Provider internet check failed: enable mobile data or Wi-Fi, then retry.")
                 val quota = SessionTrafficQuota(request.quotaBytes)
                 // Local quota gates every payload; authenticated byte deltas are persisted in batches.
                 usageReporter = SessionUsageReporter(quota, reportUsage = { bytes ->
@@ -193,9 +195,11 @@ class NetSwapPeerProxyService : VpnService() {
                     openUdp = { id, destination -> peerController.openUdp(id, destination) },
                     sendUdpData = { id, bytes -> peerController.sendUdpData(id, bytes) }
                 )
+                publish(false, "Preparing receiver TCP/UDP proxy…")
                 proxy = receiverProxy
                 peerController.attachReceiverProxy(receiverProxy)
                 val info = receiverProxy.start()
+                publish(false, "Starting secure peer signaling and ICE negotiation…")
                 peerController.start()
                 check(peerConnected.await(45, TimeUnit.SECONDS)) { "Peer did not connect within 45 seconds. Check both phones' internet." }
                 val channelDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
@@ -203,17 +207,18 @@ class NetSwapPeerProxyService : VpnService() {
                     Thread.sleep(200)
                 }
                 check(peerController.isDataChannelOpen()) { "Peer connected, but secure data channel did not open." }
-                publish(false, "Secure data channel connected — starting Receiver VPN…")
+                publish(false, "Secure data channel connected — preparing receiver VPN interface…")
                 val iceDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
                 while (!peerController.isIceGatheringComplete() && System.nanoTime() < iceDeadline && !stopped.get()) {
                     Thread.sleep(200)
                 }
+                publish(false, "Starting Android VPN and Hev packet tunnel…")
                 startReceiverDeviceTunnel(info.port)
                 // Verify a real TCP request crosses SOCKS5 -> WebRTC -> provider upstream.
                 // A gathered TURN candidate alone is not proof that relay traffic is selected.
                 // Do not advertise an active tunnel until a real request has
                 // crossed SOCKS5 -> WebRTC -> provider upstream successfully.
-                publish(false, "VPN interface started; verifying real internet traffic…")
+                publish(false, "VPN and packet tunnel started — running real internet probe…")
                 val probe = PeerTunnelConnectivityProbe.check(info.port)
                 check(probe.success) { "Peer data path connected, but internet probe failed: ${probe.detail}" }
                 val routeStatus = if (peerController.hasTurnRelayCandidate()) {
@@ -224,7 +229,10 @@ class NetSwapPeerProxyService : VpnService() {
                 publish(true, routeStatus + "Peer internet probe passed (${probe.httpStatus}). VPN tunnel is running.")
             }
 
-            if (!stopped.get()) peerController.start()
+            if (!stopped.get() && session.userId == request.receiverId) {
+                publish(false, "Provider ready — starting secure peer signaling and ICE negotiation…")
+                peerController.start()
+            }
             else peerController.close()
         } catch (failure: Exception) {
             // Preserve the actionable failure instead of overwriting it with
