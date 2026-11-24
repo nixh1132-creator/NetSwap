@@ -171,11 +171,22 @@ class WebRtcSessionController(
                 while (isActive && !closed.get()) {
                     try {
                         val incoming = withFreshSession { fresh -> NetSwapApi.pendingPeerSignals(fresh, request.id) }
-                        incoming.forEach { signal ->
+                        // The table can contain offers from earlier retries. Select the
+                        // newest offer first, then only consume ICE/answer packets for its ID.
+                        // The API fetches newest rows first so an old backlog cannot hide it.
+                        val orderedSignals = incoming.sortedBy { it.createdAt }
+                        val latestOffer = orderedSignals
+                            .filter { it.fromUserId == peerUserId && it.type == "offer" }
+                            .filter { it.payload.optString("negotiation_id").isNotBlank() }
+                            .maxByOrNull { it.createdAt }
+                        val activeRemoteNegotiation = if (!isOfferer) {
+                            negotiationId ?: latestOffer?.payload?.optString("negotiation_id")?.takeIf { it.isNotBlank() }
+                        } else negotiationId
+                        orderedSignals.forEach { signal ->
                             if (signal.fromUserId != peerUserId || !seenSignals.add(signal.id)) return@forEach
                             val signalNegotiationId = signal.payload.optString("negotiation_id")
                             when (signal.type) {
-                                "offer" -> if (!isOfferer && signalNegotiationId.isNotBlank() && offerHandled.compareAndSet(false, true)) {
+                                "offer" -> if (!isOfferer && signalNegotiationId.isNotBlank() && signalNegotiationId == activeRemoteNegotiation && offerHandled.compareAndSet(false, true)) {
                                     negotiationId = signalNegotiationId
                                     val sdp = signal.payload.optString("sdp")
                                     if (sdp.isNotBlank()) peerLink.acceptOffer(sdp).whenComplete { _, error ->
@@ -188,7 +199,7 @@ class WebRtcSessionController(
                                         if (error != null) onError(error.message ?: "Could not accept peer answer.")
                                     }
                                 }
-                                "ice" -> if (signalNegotiationId.isNotBlank() && signalNegotiationId == negotiationId) peerLink.addIceCandidate(signal.payload)
+                                "ice" -> if (signalNegotiationId.isNotBlank() && signalNegotiationId == activeRemoteNegotiation) peerLink.addIceCandidate(signal.payload)
                                 "hangup" -> close()
                             }
                         }
