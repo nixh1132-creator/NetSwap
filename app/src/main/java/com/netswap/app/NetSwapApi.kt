@@ -242,7 +242,7 @@ object NetSwapApi {
     fun pendingPeerSignals(session: AuthSession, requestId: String): List<PeerSignal> {
         val filter = "select=id,request_id,from_user_id,message_type,payload,created_at" +
             "&request_id=eq.${enc(requestId)}&to_user_id=eq.${enc(session.userId)}" +
-            "&expires_at=gt.${enc(java.time.Instant.now().toString())}&order=created_at.asc&limit=100"
+            "&expires_at=gt.${enc(java.time.Instant.now().toString())}&order=created_at.desc&limit=100"
         val rows = JSONArray(call("/rest/v1/netswap_signals?$filter", "GET", session.accessToken))
         return (0 until rows.length()).map { i ->
             val row = rows.getJSONObject(i)
