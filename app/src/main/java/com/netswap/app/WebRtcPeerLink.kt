@@ -6,6 +6,7 @@ import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RTCStatsReport
 import org.webrtc.SessionDescription
 import org.webrtc.SdpObserver
 import java.nio.ByteBuffer
@@ -27,7 +28,8 @@ class WebRtcPeerLink(
     private val onState: (PeerConnection.PeerConnectionState) -> Unit,
     private val onMessage: (ByteArray) -> Unit,
     private val onError: (String) -> Unit,
-    private val createDataChannel: Boolean = true
+    private val createDataChannel: Boolean = true,
+    private val onIceRoute: (String) -> Unit = {}
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val dataChannelReady = AtomicBoolean(false)
@@ -57,7 +59,10 @@ class WebRtcPeerLink(
             }
         }
         override fun onStandardizedIceConnectionChange(state: PeerConnection.IceConnectionState) {}
-        override fun onConnectionChange(state: PeerConnection.PeerConnectionState) { onState(state) }
+        override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
+            onState(state)
+            if (state == PeerConnection.PeerConnectionState.CONNECTED) reportSelectedIceRoute()
+        }
         override fun onIceConnectionReceivingChange(receiving: Boolean) {}
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
             if (state == PeerConnection.IceGatheringState.COMPLETE) iceGatheringComplete.set(true)
@@ -197,6 +202,45 @@ class WebRtcPeerLink(
             if (!peer.addIceCandidate(candidate)) {
                 onError("A queued WebRTC network candidate could not be added.")
             }
+        }
+    }
+
+
+    /**
+     * Reports the nominated ICE pair from WebRTC stats. Candidate gathering alone
+     * is not proof that TURN/direct connectivity was selected or is carrying bytes.
+     */
+    private fun reportSelectedIceRoute() {
+        if (closed.get()) return
+        peer.getStats { report: RTCStatsReport ->
+            if (closed.get()) return@getStats
+            val stats = report.statsMap
+            val transport = stats.values.firstOrNull { it.type == "transport" }
+            val selectedPairId = transport?.members?.get("selectedCandidatePairId") as? String
+            val pair = selectedPairId?.let { stats[it] }
+                ?: stats.values.firstOrNull { stat ->
+                    stat.type == "candidate-pair" &&
+                        stat.members["state"] == "succeeded" &&
+                        stat.members["nominated"] == true
+                }
+            if (pair == null) {
+                onIceRoute("Connected, but selected ICE candidate pair is not exposed by this WebRTC build.")
+                return@getStats
+            }
+            val localId = pair.members["localCandidateId"] as? String
+            val remoteId = pair.members["remoteCandidateId"] as? String
+            val local = localId?.let { stats[it] }
+            val remote = remoteId?.let { stats[it] }
+            fun member(stat: org.webrtc.RTCStats?, key: String): String =
+                stat?.members?.get(key)?.toString() ?: "unknown"
+            val localType = member(local, "candidateType")
+            val remoteType = member(remote, "candidateType")
+            val protocol = member(local, "protocol")
+            val bytesSent = member(pair, "bytesSent")
+            val bytesReceived = member(pair, "bytesReceived")
+            val rtt = member(pair, "currentRoundTripTime")
+            val route = if (localType == "relay" || remoteType == "relay") "TURN relay" else "direct"
+            onIceRoute("$route selected; local=$localType, remote=$remoteType, protocol=$protocol, bytesSent=$bytesSent, bytesReceived=$bytesReceived, rttSeconds=$rtt")
         }
     }
 
