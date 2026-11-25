@@ -234,7 +234,11 @@ class NetSwapPeerProxyService : VpnService() {
                 publish(false, "Provider ready — starting secure peer signaling and ICE negotiation…")
                 peerController.start()
             }
-            else peerController.close()
+            // Keep the receiver's controller alive after the first successful
+            // probe. Closing it here immediately tore down the very data channel
+            // that the VPN/Hev tunnel depends on, making a "passed" probe unusable.
+            // Both provider and receiver controllers are owned by this foreground
+            // service and are released only by stopPeer()/onRevoke()/onDestroy().
         } catch (failure: Exception) {
             // Preserve the actionable failure instead of overwriting it with
             // "session stopped" during cleanup.
