@@ -66,7 +66,7 @@ internal object PeerTunnelConnectivityProbe {
                     secure.soTimeout = READ_TIMEOUT_MS
                     secure.startHandshake()
                     secure.outputStream.write(
-                        "GET $path HTTP/1.1\\r\\nHost: $host\\r\\nConnection: close\\r\\nUser-Agent: NetSwap-Probe\\r\\n\\r\\n"
+                        "GET $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\nUser-Agent: NetSwap-Probe\r\n\r\n"
                             .toByteArray(Charsets.US_ASCII)
                     )
                     secure.outputStream.flush()
