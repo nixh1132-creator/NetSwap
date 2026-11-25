@@ -10,6 +10,7 @@ import android.os.ParcelFileDescriptor
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import org.webrtc.PeerConnection
 import java.util.concurrent.Executors
 import java.util.concurrent.CountDownLatch
@@ -239,15 +240,21 @@ class NetSwapPeerProxyService : VpnService() {
             // that the VPN/Hev tunnel depends on, making a "passed" probe unusable.
             // Both provider and receiver controllers are owned by this foreground
             // service and are released only by stopPeer()/onRevoke()/onDestroy().
+        } catch (failure: LinkageError) {
+            Log.e("NetSwapPeer", "Native peer tunnel component unavailable", failure)
+            reportStartFailure("Native tunnel component unavailable: ${failure.message ?: failure.javaClass.simpleName}")
         } catch (failure: Exception) {
-            // Preserve the actionable failure instead of overwriting it with
-            // "session stopped" during cleanup.
-            val reason = failure.message?.take(220) ?: "Peer connection could not start."
-            stopPeer(publishStopped = false)
-            publish(false, reason)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            Log.e("NetSwapPeer", "Peer session startup failed", failure)
+            reportStartFailure(failure.message ?: "Peer connection could not start.")
         }
+    }
+
+    private fun reportStartFailure(message: String) {
+        val reason = message.take(220)
+        stopPeer(publishStopped = false)
+        publish(false, reason)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     /** Installs an IPv4 default route and pipes packets through Hev -> local SOCKS5 -> WebRTC. */
