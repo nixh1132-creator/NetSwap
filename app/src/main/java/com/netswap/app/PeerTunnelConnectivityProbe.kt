@@ -3,16 +3,32 @@ package com.netswap.app
 import java.io.DataInputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 /**
- * Performs a real TCP request through the receiver's loopback SOCKS5 proxy.
- * This verifies the SOCKS -> WebRTC -> provider upstream path, not merely ICE
- * candidate gathering or DataChannel state.
+ * Performs a real HTTPS request through the receiver's loopback SOCKS5 proxy.
+ * This verifies SOCKS -> WebRTC -> provider upstream, including provider-side DNS,
+ * TCP and TLS. It does not treat ICE or DataChannel connection as internet access.
  */
 internal object PeerTunnelConnectivityProbe {
     data class Result(val success: Boolean, val detail: String, val httpStatus: String = "")
 
     fun check(proxyPort: Int): Result {
+        val targets = listOf(
+            "connectivitycheck.gstatic.com" to "/generate_204",
+            "example.com" to "/"
+        )
+        var lastFailure = "No HTTPS probe target completed."
+        for ((host, path) in targets) {
+            val result = checkHttpsTarget(proxyPort, host, path)
+            if (result.success) return result
+            lastFailure = "$host: ${result.detail}"
+        }
+        return Result(false, lastFailure)
+    }
+
+    private fun checkHttpsTarget(proxyPort: Int, host: String, path: String): Result {
         return try {
             Socket().use { socket ->
                 socket.connect(InetSocketAddress("127.0.0.1", proxyPort), CONNECT_TIMEOUT_MS)
@@ -20,15 +36,15 @@ internal object PeerTunnelConnectivityProbe {
                 val input = DataInputStream(socket.getInputStream())
                 val output = socket.getOutputStream()
 
-                // SOCKS5, no authentication.
+                // SOCKS5, no authentication; pass the hostname so DNS runs on the provider.
                 output.write(byteArrayOf(5, 1, 0))
                 output.flush()
                 check(input.readUnsignedByte() == 5 && input.readUnsignedByte() == 0) {
                     "SOCKS5 negotiation failed."
                 }
 
-                val host = "example.com".toByteArray(Charsets.US_ASCII)
-                output.write(byteArrayOf(5, 1, 0, 3, host.size.toByte()) + host + byteArrayOf(0, 80))
+                val hostBytes = host.toByteArray(Charsets.US_ASCII)
+                output.write(byteArrayOf(5, 1, 0, 3, hostBytes.size.toByte()) + hostBytes + byteArrayOf(1, -69))
                 output.flush()
 
                 check(input.readUnsignedByte() == 5) { "Invalid SOCKS5 connect response." }
@@ -44,14 +60,22 @@ internal object PeerTunnelConnectivityProbe {
                 }
                 input.readUnsignedShort() // bound port
 
-                output.write(
-                    "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\nUser-Agent: NetSwap-Probe\r\n\r\n"
-                        .toByteArray(Charsets.US_ASCII)
-                )
-                output.flush()
-                val status = readLine(input)
-                check(status.startsWith("HTTP/")) { "Provider returned an invalid HTTP response." }
-                Result(true, "HTTP response received through provider.", status)
+                val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory)
+                    .createSocket(socket, host, 443, true) as SSLSocket
+                tls.use { secure ->
+                    secure.soTimeout = READ_TIMEOUT_MS
+                    secure.startHandshake()
+                    secure.outputStream.write(
+                        "GET $path HTTP/1.1\\r\\nHost: $host\\r\\nConnection: close\\r\\nUser-Agent: NetSwap-Probe\\r\\n\\r\\n"
+                            .toByteArray(Charsets.US_ASCII)
+                    )
+                    secure.outputStream.flush()
+                    val status = readLine(DataInputStream(secure.inputStream))
+                    check(status.startsWith("HTTP/")) { "Provider returned an invalid HTTPS response." }
+                    val code = status.split(' ').getOrNull(1)?.toIntOrNull()
+                    check(code != null && code in 200..399) { "HTTPS probe returned $status." }
+                    Result(true, "HTTPS response received through provider ($host).", status)
+                }
             }
         } catch (failure: Exception) {
             Result(false, failure.message ?: failure.javaClass.simpleName)
