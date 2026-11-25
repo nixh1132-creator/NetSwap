@@ -154,7 +154,8 @@ class NetSwapPeerProxyService : VpnService() {
                     // Do not tear down/report failure until WebRTC reaches FAILED.
                 },
                 onMessage = {},
-                onError = { publish(false, it.take(180)) }
+                onError = { publish(false, it.take(180)) },
+                onIceRoute = { publish(false, "ICE route diagnostics: ${it.take(150)}") }
             )
             controller = peerController
 
