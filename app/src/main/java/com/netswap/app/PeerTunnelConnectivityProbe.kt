@@ -53,9 +53,9 @@ internal object PeerTunnelConnectivityProbe {
                 val atyp = input.readUnsignedByte()
                 check(reply == 0) { "SOCKS5 CONNECT failed (reply $reply)." }
                 when (atyp) {
-                    1 -> input.skipBytes(4)
-                    4 -> input.skipBytes(16)
-                    3 -> input.skipBytes(input.readUnsignedByte())
+                    1 -> ByteArray(4).also(input::readFully)
+                    4 -> ByteArray(16).also(input::readFully)
+                    3 -> ByteArray(input.readUnsignedByte()).also(input::readFully)
                     else -> error("Invalid SOCKS5 bound address.")
                 }
                 input.readUnsignedShort() // bound port
