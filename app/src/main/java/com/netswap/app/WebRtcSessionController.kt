@@ -27,7 +27,8 @@ class WebRtcSessionController(
     private val request: ShareRequest,
     private val onState: (PeerConnectionState) -> Unit,
     private val onMessage: (ByteArray) -> Unit,
-    private val onError: (String) -> Unit
+    private val onError: (String) -> Unit,
+    private val onIceRoute: (String) -> Unit = {}
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     @Volatile private var activeSession: AuthSession = session
@@ -128,7 +129,8 @@ class WebRtcSessionController(
                     onMessage(bytes)
                 },
                 onError = onError,
-                createDataChannel = isOfferer
+                createDataChannel = isOfferer,
+                onIceRoute = onIceRoute
             )
             link = peerLink
             val bridge = PeerStreamTransportBridge(
