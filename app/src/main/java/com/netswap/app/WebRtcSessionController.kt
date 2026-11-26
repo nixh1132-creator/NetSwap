@@ -185,24 +185,35 @@ class WebRtcSessionController(
                             negotiationId ?: latestOffer?.payload?.optString("negotiation_id")?.takeIf { it.isNotBlank() }
                         } else negotiationId
                         orderedSignals.forEach { signal ->
-                            if (signal.fromUserId != peerUserId || !seenSignals.add(signal.id)) return@forEach
+                            if (signal.fromUserId != peerUserId || signal.id in seenSignals) return@forEach
                             val signalNegotiationId = signal.payload.optString("negotiation_id")
                             when (signal.type) {
                                 "offer" -> if (!isOfferer && signalNegotiationId.isNotBlank() && signalNegotiationId == activeRemoteNegotiation && offerHandled.compareAndSet(false, true)) {
+                                    seenSignals.add(signal.id)
                                     negotiationId = signalNegotiationId
                                     val sdp = signal.payload.optString("sdp")
                                     if (sdp.isNotBlank()) peerLink.acceptOffer(sdp).whenComplete { _, error ->
                                         if (error != null) onError(error.message ?: "Could not accept peer offer.")
-                                    }
+                                    } else onError("Received an empty peer offer.")
                                 }
                                 "answer" -> if (isOfferer && signalNegotiationId.isNotBlank() && signalNegotiationId == negotiationId && answerHandled.compareAndSet(false, true)) {
+                                    seenSignals.add(signal.id)
                                     val sdp = signal.payload.optString("sdp")
                                     if (sdp.isNotBlank()) peerLink.acceptAnswer(sdp).whenComplete { _, error ->
                                         if (error != null) onError(error.message ?: "Could not accept peer answer.")
-                                    }
+                                    } else onError("Received an empty peer answer.")
                                 }
-                                "ice" -> if (signalNegotiationId.isNotBlank() && signalNegotiationId == activeRemoteNegotiation) peerLink.addIceCandidate(signal.payload)
-                                "hangup" -> close()
+                                // Signals are posted asynchronously; an ICE row can arrive
+                                // before its SDP row. Keep unmatched candidates eligible for
+                                // the next poll instead of permanently marking them consumed.
+                                "ice" -> if (signalNegotiationId.isNotBlank() && signalNegotiationId == activeRemoteNegotiation) {
+                                    seenSignals.add(signal.id)
+                                    if (!peerLink.addIceCandidate(signal.payload)) onError("A peer ICE candidate could not be queued or added.")
+                                }
+                                "hangup" -> {
+                                    seenSignals.add(signal.id)
+                                    close()
+                                }
                             }
                         }
                         if (seenSignals.size > 500) seenSignals.clear()
