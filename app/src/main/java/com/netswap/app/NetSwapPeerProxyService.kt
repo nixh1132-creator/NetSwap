@@ -259,7 +259,14 @@ class NetSwapPeerProxyService : VpnService() {
 
     /** Installs an IPv4 default route and pipes packets through Hev -> local SOCKS5 -> WebRTC. */
     private fun startReceiverDeviceTunnel(socksPort: Int) {
+        fun checkpoint(stage: String) {
+            Log.i("NetSwapTunnelDiag", "request=${startingRequestId ?: "unknown"} stage=$stage")
+            publish(false, "Receiver tunnel: $stage")
+        }
+
+        checkpoint("checking VPN permission")
         check(VpnService.prepare(this) == null) { "Android VPN permission is required." }
+        checkpoint("establishing Android VPN interface")
         val tun = Builder()
             .setSession("NetSwap internet sharing")
             .setMtu(1400)
@@ -271,18 +278,32 @@ class NetSwapPeerProxyService : VpnService() {
             .addDisallowedApplication(packageName)
             .establish() ?: error("Android could not establish receiver VPN interface.")
         receiverTun = tun
+        checkpoint("Android VPN interface established")
+
+        checkpoint("creating native packet socket pair")
         val pair = HevPacketSocketPair.create()
         hevPair = pair
+        checkpoint("native packet socket pair created")
+
+        checkpoint("loading and starting Hev native tunnel")
         val runtime = HevTunnelRuntime(this)
         hevRuntime = runtime
         runtime.start(pair.hevDescriptor, "127.0.0.1", socksPort)
         check(runtime.isRunning()) { "Hev packet tunnel did not stay running." }
+        checkpoint("Hev native tunnel running")
+
+        checkpoint("duplicating Android VPN packet descriptors")
         val androidDevice = AndroidTunPacketDevice.from(tun)
+        checkpoint("Android VPN packet descriptors ready")
+
+        checkpoint("starting bidirectional packet relay")
         val relay = HevTunPacketRelay(androidDevice, pair.packetDevice) { reason ->
+            Log.e("NetSwapTunnelDiag", "Packet relay failure: $reason")
             publish(false, "Packet tunnel stopped: ${reason.take(120)}")
         }
         hevRelay = relay
         relay.start()
+        checkpoint("bidirectional packet relay started")
     }
 
     private fun publish(active: Boolean, message: String) {
