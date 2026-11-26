@@ -234,6 +234,21 @@ class NetSwapPeerProxyService : VpnService() {
             if (!stopped.get() && session.userId == request.receiverId) {
                 publish(false, "Provider ready — starting secure peer signaling and ICE negotiation…")
                 peerController.start()
+
+                // Do not report the provider as ready merely because signaling started.
+                // Wait for the real peer transport and its ordered DataChannel.
+                check(peerConnected.await(45, TimeUnit.SECONDS) && !stopped.get()) {
+                    "Provider peer connection did not establish within 45 seconds."
+                }
+                val providerChannelDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+                while (!peerController.isDataChannelOpen() &&
+                    System.nanoTime() < providerChannelDeadline && !stopped.get()) {
+                    Thread.sleep(200)
+                }
+                check(!stopped.get() && peerController.isDataChannelOpen()) {
+                    "Provider peer connected, but secure DataChannel did not open."
+                }
+                publish(false, "Provider peer link and secure DataChannel connected — waiting for receiver VPN and internet verification.")
             }
             // Keep the receiver's controller alive after the first successful
             // probe. Closing it here immediately tore down the very data channel
